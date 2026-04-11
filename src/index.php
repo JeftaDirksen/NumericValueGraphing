@@ -6,11 +6,15 @@ define('HOST', $_SERVER['HTTP_HOST']);
 define('DATA_DIR', '/data/');
 define('SECRET_PATTERN', '/^[A-Za-z0-9_-]{5,50}$/');
 define('DATASET_PATTERN', '/^[A-Za-z0-9-]{1,10}$/');
-header('Content-Type: text/plain');
 
 switch ($_SERVER['REQUEST_METHOD']) {
 
     case 'GET':
+        if (!isset($_GET['path'])) {
+            include 'form.php';
+            exit();
+        }
+        break;
 
     case 'POST':
         if (isset($_GET['path'])) {
@@ -18,12 +22,16 @@ switch ($_SERVER['REQUEST_METHOD']) {
             exit('Method not allowed on this endpoint');
         }
 
-        $hash = validateSecret($_POST['secret'] ?? '');
+        $secret = $_POST['secret'] ?? '';
+        $hash = validateSecret($secret);
         $time = time();
 
         // Iterate datasets (POST fields)
+        $fields = [];
         foreach ($_POST as $key => $value) {
             if ($key === 'secret') continue; // Skip secret field
+            if (str_starts_with($key, '_')) continue; // Skip if key starts with _ (e.g. _redirect)
+            $fields[] = $key;
             $ds = validateDataset($key);
             $val = validateNumber($value);
             $datasetSamplesFile = DATA_DIR . $hash . '_' . $ds . '_samples.txt';
@@ -32,6 +40,10 @@ switch ($_SERVER['REQUEST_METHOD']) {
             aggregateData($hash, $ds);
         }
 
+        if (isset($_POST['_redirect'])) {
+            header('Location: ' . SCHEME . '://' . HOST . '/?queryurl=' . getUrl($hash) . '&secret=' . $secret . '&name1=' . $fields[0] . '&name2=' . ($fields[1] ?? '') . '&name3=' . ($fields[2] ?? '') . '&name4=' . ($fields[3] ?? '') . '&name5=' . ($fields[4] ?? ''));
+            exit();
+        }
         exit(getUrl($hash));
 
     default:
@@ -154,4 +166,8 @@ function saveSamples($hash, $dataset, $samples) {
     file_put_contents($datasetSamplesFile, implode('|', array_map(function ($sample) {
         return $sample[0] . ':' . $sample[1];
     }, $samples)) . '|', LOCK_EX);
+}
+
+function htmlUrl($url): string {
+    return '<a href="' . $url . '" target="_blank">' . $url . '</a>';
 }
