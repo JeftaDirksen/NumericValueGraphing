@@ -1,0 +1,12 @@
+services:
+  graphapi:
+    container_name: graphapi
+    build: .
+    ports:
+      - "${PORT:-8080}:80"
+    volumes:
+      - data:/data
+    restart: unless-stopped
+
+volumes:
+  data:
