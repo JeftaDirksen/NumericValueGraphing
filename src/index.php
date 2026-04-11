@@ -80,7 +80,6 @@ function aggregateData($hash, $dataset) {
     $cur_minute = getMinute($cur_time);
 
     $samples = getSamples($hash, $dataset);
-    print_r($samples);
 
     $first_sample_minute = getMinute($samples[0][0]);
     if ($first_sample_minute < $cur_minute) {
@@ -129,10 +128,7 @@ function aggregateData($hash, $dataset) {
         $remainingSamples = array_filter($samples, function ($sample) use ($cur_minute) {
             return $sample[0] >= $cur_minute;
         });
-        $datasetSamplesFile = DATA_DIR . $hash . '_' . $dataset . '_samples.txt';
-        file_put_contents($datasetSamplesFile, implode('|', array_map(function ($sample) {
-            return $sample[0] . ':' . $sample[1];
-        }, $remainingSamples)) . '|', LOCK_EX);
+        saveSamples($hash, $dataset, $remainingSamples);
     }
 }
 
@@ -151,4 +147,11 @@ function getSamples($hash, $dataset): array {
         list($timestamp, $value) = explode(':', $sample);
         return [(int)$timestamp, (float)$value];
     }, $samplesArray);
+}
+
+function saveSamples($hash, $dataset, $samples) {
+    $datasetSamplesFile = DATA_DIR . $hash . '_' . $dataset . '_samples.txt';
+    file_put_contents($datasetSamplesFile, implode('|', array_map(function ($sample) {
+        return $sample[0] . ':' . $sample[1];
+    }, $samples)) . '|', LOCK_EX);
 }
