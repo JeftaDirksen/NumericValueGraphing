@@ -1,6 +1,6 @@
 services:
-  graphapi:
-    container_name: graphapi
+  nvg:
+    container_name: nvg
     build: .
     ports:
       - "${PORT:-8080}:80"
