@@ -1,7 +1,7 @@
 <?php
 
 // Config
-define('MAX_DATA_POINTS', 300);
+define('MAX_DATA_POINTS', 250);
 
 // Init
 $hash = $_GET['path'];
@@ -13,7 +13,7 @@ if (!isset($_GET['period']) || !isset($_GET['datasets'])) redirect($hash . '?per
 
 // Calculate smallest aggregation level that keeps the number of data points under MAX_DATA_POINTS
 $periodInMinutes = getPeriodInMinutes($period);
-$aggregationLevelsMinutes = ['minutes' => 1, 'hours' => 60, 'days' => 1440, 'weeks' => 10080, 'months' => 43200, 'years' => 525600];
+$aggregationLevelsMinutes = ['minutes' => 1, 'quarters' => 15, 'hours' => 60, 'days' => 1440, 'weeks' => 10080, 'months' => 43680, 'years' => 524160];
 $aggregationLevel = 'years'; // Default to years if no suitable level is found
 foreach ($aggregationLevelsMinutes as $level => $minutes) {
     $points = $periodInMinutes / $minutes;

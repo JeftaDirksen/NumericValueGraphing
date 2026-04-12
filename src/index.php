@@ -57,11 +57,14 @@ switch ($_SERVER['REQUEST_METHOD']) {
 
 function aggregateData($hash, $dataset): void {
     aggregateSamples($hash, $dataset);
-    aggregatePeriods("minutes", "hours", $hash, $dataset);
+    aggregatePeriods("minutes", "quarters", $hash, $dataset);
+    aggregatePeriods("quarters", "hours", $hash, $dataset);
     aggregatePeriods("hours", "days", $hash, $dataset);
     aggregatePeriods("days", "weeks", $hash, $dataset);
     aggregatePeriods("days", "months", $hash, $dataset);
     aggregatePeriods("months", "years", $hash, $dataset);
+
+    // TODO: Cleanup old data
 }
 
 function aggregateSamples($hash, $dataset): void {
@@ -258,6 +261,8 @@ function getPeriodTimestamp($timestamp, $period): int {
     switch ($period) {
         case 'minutes':
             return floor($timestamp / 60) * 60;
+        case 'quarters':
+            return floor($timestamp / 900) * 900;
         case 'hours':
             return floor($timestamp / 3600) * 3600;
         case 'days':
