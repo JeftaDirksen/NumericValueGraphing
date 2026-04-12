@@ -11,7 +11,10 @@ define('DATASET_PATTERN', '/^[A-Za-z0-9-]{1,15}$/');
 switch ($_SERVER['REQUEST_METHOD']) {
 
     case 'GET':
-        if (!isset($_GET['path'])) {
+        if (isset($_GET['path'])) {
+            include 'graph.php';
+            exit();
+        } else {
             include 'form.php';
             exit();
         }
@@ -43,8 +46,7 @@ switch ($_SERVER['REQUEST_METHOD']) {
         }
 
         if (isset($_POST['_redirect'])) {
-            header('Location: ' . SCHEME . '://' . HOST . '/?queryurl=' . getUrl($hash) . '&secret=' . $secret . '&name1=' . $fields[0] . '&name2=' . ($fields[1] ?? '') . '&name3=' . ($fields[2] ?? '') . '&name4=' . ($fields[3] ?? '') . '&name5=' . ($fields[4] ?? ''));
-            exit();
+            redirect('?queryurl=' . getUrl($hash) . '&secret=' . $secret . '&name1=' . $fields[0] . '&name2=' . ($fields[1] ?? '') . '&name3=' . ($fields[2] ?? '') . '&name4=' . ($fields[3] ?? '') . '&name5=' . ($fields[4] ?? ''));
         }
         exit(getUrl($hash));
 
@@ -161,6 +163,9 @@ function aggregatePeriods($fromPeriod, $toPeriod, $hash, $dataset): void {
         $periodData[$thisToPeriod]['last'] = $entry[4];
     }
 
+    // Stop if there's no new data to aggregate
+    if (empty($periodData)) return;
+
     // Write aggregated data to file
     $file = DATA_DIR . $hash . '_' . $dataset . '_' . $toPeriod . '.txt';
     $dataString = "";
@@ -184,6 +189,14 @@ function generateTestData($hash, $ds): void {
         $value += $valueStep + rand(-1 * 1000, 1 * 1000) / 1000; // Add some random noise to the value
     }
     file_put_contents($datasetSamplesFile, implode("|", $samples) . "|", LOCK_EX);
+}
+
+function redirect($url): void {
+    if (!str_starts_with($url, 'http')) {
+        $url = SCHEME . '://' . HOST . '/' . ltrim($url, '/');
+    }
+    header('Location: ' . $url);
+    exit();
 }
 
 function validateSecret($secret): string {
@@ -222,8 +235,8 @@ function getUrl($hash): string {
     return SCHEME . '://' . HOST . '/' . $hash;
 }
 
-function getAggregatedData($hash, $dataset, $period): array {
-    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $period . '.txt';
+function getAggregatedData($hash, $dataset, $aggregationLevel): array {
+    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $aggregationLevel . '.txt';
     if (!file_exists($file)) return [];
     $data = file_get_contents($file);
     $array = explode('|', trim($data, '|'));
