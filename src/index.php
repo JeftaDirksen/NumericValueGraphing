@@ -235,16 +235,19 @@ function getUrl($hash): string {
     return SCHEME . '://' . HOST . '/' . $hash;
 }
 
-function getAggregatedData($hash, $dataset, $aggregationLevel): array {
+function getAggregatedData($hash, $dataset, $aggregationLevel, $from = 0): array {
     $file = DATA_DIR . $hash . '_' . $dataset . '_' . $aggregationLevel . '.txt';
     if (!file_exists($file)) return [];
     $data = file_get_contents($file);
     $array = explode('|', trim($data, '|'));
-    return array_map(function ($entry) {
+    $data = array_map(function ($entry) {
         list($timestamp, $values) = explode(':', $entry);
         list($avg, $min, $max, $last) = explode(',', $values);
         return [(int)$timestamp, (float)$avg, (float)$min, (float)$max, (float)$last];
     }, $array);
+    return array_filter($data, function ($entry) use ($from) {
+        return $entry[0] >= $from;
+    });
 }
 
 function getPeriodTimestamp($timestamp, $period): int {

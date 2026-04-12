@@ -21,12 +21,11 @@ foreach ($aggregationLevelsMinutes as $level => $minutes) {
         break;
     }
 }
-//echo "Using aggregation level: $aggregationLevel for period: $period ($periodInMinutes minutes) with approximately " . round($periodInMinutes / $aggregationLevelsMinutes[$aggregationLevel]) . " data points.<br>";
 
 // Get data for the graph
-$data = getAggregatedData($hash, "test", $aggregationLevel);
+$data = getAggregatedData($hash, $dataset, $aggregationLevel, time() - $periodInMinutes * 60);
 if (empty($data)) {
-    $chartData = [['Time', 'Value'], ['No data', 0]];
+    $chartDataJson = "[[{type: 'datetime', label: 'Time'},{type: 'number', label: 'Value'}],[new Date(0), 0]]";
 } else {
     // Convert data to format suitable for Google Charts
     $chartDataJson = "[[{type: 'datetime', label: 'Time'}, {type: 'number', label: 'Value'}],";
@@ -75,6 +74,7 @@ function getPeriodInMinutes($period): int {
 }
 
 ?>
+<!doctype html>
 <html>
 
 <head>
