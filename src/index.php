@@ -46,7 +46,7 @@ switch ($_SERVER['REQUEST_METHOD']) {
         }
 
         if (isset($_POST['_redirect'])) {
-            redirect('?queryurl=' . getUrl($hash) . '&secret=' . $secret . '&name1=' . $fields[0] . '&name2=' . ($fields[1] ?? '') . '&name3=' . ($fields[2] ?? '') . '&name4=' . ($fields[3] ?? '') . '&name5=' . ($fields[4] ?? ''));
+            redirect('?graphurl=' . getUrl($hash) . '&secret=' . $secret . '&name1=' . $fields[0] . '&name2=' . ($fields[1] ?? '') . '&name3=' . ($fields[2] ?? '') . '&name4=' . ($fields[3] ?? '') . '&name5=' . ($fields[4] ?? ''));
         }
         exit(getUrl($hash));
 

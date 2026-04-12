@@ -63,7 +63,7 @@
         <input type="number" id="value5" name="value5" step="any" pattern="[0-9.]{1,10}" placeholder="value"><br />
 
         <input type="hidden" name="_redirect" value="1">
-        <input type="submit" value="Submit"> <span class="msg ok"><?php echo isset($_GET['queryurl']) ? 'OK - Graph URL: ' . htmlUrl($_GET['queryurl']) : ''; ?></span>
+        <input type="submit" value="Submit"> <span class="msg ok"><?php echo isset($_GET['graphurl']) ? 'OK - Graph URL: ' . htmlUrl($_GET['graphurl']) : ''; ?></span>
     </form>
 
     <script>

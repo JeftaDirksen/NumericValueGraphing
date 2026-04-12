@@ -6,12 +6,13 @@ define('MAX_DATA_POINTS', 150);
 // Init
 $hash = $_GET['path'];
 $period = $_GET['period'] ?? '1hour';
-$dataset = $_GET['dataset'] ?? 'test';
-if (!isset($_GET['period']) || !isset($_GET['dataset'])) redirect($hash . '?period=' . $period . '&dataset=' . $dataset);
+$datasets = $_GET['datasets'] ?? getDatasets($hash);
 
-$periodInMinutes = getPeriodInMinutes($period);
+// Put variables in URL if not present
+if (!isset($_GET['period']) || !isset($_GET['datasets'])) redirect($hash . '?period=' . $period . '&datasets=' . $datasets);
 
 // Calculate smallest aggregation level that keeps the number of data points under MAX_DATA_POINTS
+$periodInMinutes = getPeriodInMinutes($period);
 $aggregationLevelsMinutes = ['minutes' => 1, 'hours' => 60, 'days' => 1440, 'weeks' => 10080, 'months' => 43200, 'years' => 525600];
 $aggregationLevel = 'years'; // Default to years if no suitable level is found
 foreach ($aggregationLevelsMinutes as $level => $minutes) {
@@ -22,18 +23,58 @@ foreach ($aggregationLevelsMinutes as $level => $minutes) {
     }
 }
 
-// Get data for the graph
-$data = getAggregatedData($hash, $dataset, $aggregationLevel, time() - $periodInMinutes * 60);
+// Iterate datasets and get data for each
+$data = [];
+foreach (explode(',', $datasets) as $dataset) {
+    $data[$dataset] = getAggregatedData($hash, $dataset, $aggregationLevel, time() - $periodInMinutes * 60);
+}
+
 if (empty($data)) {
-    $chartDataJson = "[[{type: 'datetime', label: 'Time'},{type: 'number', label: '$dataset'}],[new Date(0), 0]]";
+    $chartDataJson = "[[{type: 'datetime', label: 'Time'},{type: 'number', label: 'Data'}],[new Date(0), 0]]";
 } else {
-    // Convert data to format suitable for Google Charts
-    $chartDataJson = "[[{type: 'datetime', label: 'Time'}, {type: 'number', label: '$dataset'}],";
-    foreach ($data as $entry) {
-        $datetime = 'new Date(' . $entry[0] * 1000 . ')';
-        $chartDataJson .= "[$datetime, {$entry[1]}],";
+    // Convert data to format suitable for Google Charts with multiple datasets
+    $chartDataJson = "[[{type: 'datetime', label: 'Time'}";
+    foreach ($data as $dataset => $entries) {
+        $chartDataJson .= ", {type: 'number', label: '$dataset'}";
     }
-    $chartDataJson = rtrim($chartDataJson, ',') . ']';
+    $chartDataJson .= "]";
+
+    // Collect all timestamps
+    $timestamps = [];
+    foreach ($data as $entries) {
+        foreach ($entries as $entry) {
+            $timestamps[$entry[0]] = true;
+        }
+    }
+    ksort($timestamps);
+
+    // Build rows with values for each dataset
+    foreach (array_keys($timestamps) as $timestamp) {
+        $chartDataJson .= ",[new Date(" . $timestamp * 1000 . ")";
+        foreach ($data as $entries) {
+            $value = null;
+            foreach ($entries as $entry) {
+                if ($entry[0] == $timestamp) {
+                    $value = $entry[1];
+                    break;
+                }
+            }
+            $chartDataJson .= ", $value";
+        }
+        $chartDataJson .= "]";
+    }
+    $chartDataJson .= "]";
+}
+
+function getDatasets($hash): string {
+    // Iterate files in DATA_DIR and find the datasets for the given hash
+    $datasets = [];
+    foreach (glob(DATA_DIR . $hash . '_*_samples.txt') as $file) {
+        $filename = basename($file);
+        $parts = explode('_', $filename);
+        $datasets[] = $parts[1];
+    }
+    return implode(',', $datasets);
 }
 
 function getPeriodInMinutes($period): int {
