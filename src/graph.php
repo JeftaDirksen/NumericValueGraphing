@@ -1,7 +1,7 @@
 <?php
 
 // Config
-define('MAX_DATA_POINTS', 150);
+define('MAX_DATA_POINTS', 300);
 
 // Init
 $hash = $_GET['path'];
@@ -144,7 +144,7 @@ function getPeriodInMinutes($period): int {
 </head>
 
 <body>
-    <div id="curve_chart" style="width: 900px; height: 500px"></div>
+    <div id="curve_chart" style="width: 1200px; height: 600px"></div>
 </body>
 
 </html>

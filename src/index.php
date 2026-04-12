@@ -1,7 +1,7 @@
 <?php
 
 // Init
-ini_set('memory_limit', '256M');
+ini_set('memory_limit', '512M');
 define('SCHEME', $_SERVER['HTTP_X_FORWARDED_PROTO'] ?? $_SERVER['REQUEST_SCHEME']);
 define('HOST', $_SERVER['HTTP_HOST']);
 define('DATA_DIR', '/data/');
@@ -37,7 +37,7 @@ switch ($_SERVER['REQUEST_METHOD']) {
             if (str_starts_with($key, '_')) continue; // Skip if key starts with _ (e.g. _redirect)
             $fields[] = $key;
             $ds = validateDataset($key);
-            if ($secret === 'testing' && $ds === 'testdata' && $value === '123') generateTestData($hash, $ds); // For testing purposes, generates a lot of random data
+            if ($secret === 'testing' && $ds === 'testdata' && $value === '123') generateTestData($hash); // For testing purposes, generates a lot of random data
             $val = validateNumber($value);
             $datasetSamplesFile = DATA_DIR . $hash . '_' . $ds . '_samples.txt';
             $sample = "$time:$val|";
@@ -177,17 +177,22 @@ function aggregatePeriods($fromPeriod, $toPeriod, $hash, $dataset): void {
     file_put_contents($file, $dataString, FILE_APPEND | LOCK_EX);
 }
 
-function generateTestData($hash, $ds): void {
-    $datasetSamplesFile = DATA_DIR . $hash . '_' . $ds . '_samples.txt';
-    $now = time();
-    $threeYearsAgo = $now - (3 * 365 * 24 * 60 * 60);
-    $samples = [];
-    $value = 123;
-    for ($time = $threeYearsAgo; $time <= $now; $time += 180) {
-        $samples[] = "$time:$value";
-        $value += rand(-3 * 1000, 3 * 1000) / 1000; // Add some random noise to the value
+function generateTestData($hash): void {
+    $datasets = ['testdata1', 'testdata2', 'testdata3'];
+    foreach ($datasets as $dataset) {
+        $datasetSamplesFile = DATA_DIR . $hash . '_' . $dataset . '_samples.txt';
+        $now = time();
+        $twoYearsAgo = $now - (2 * 365 * 24 * 60 * 60);
+        $samples = [];
+        $value = 0;
+        for ($time = $twoYearsAgo; $time <= $now; $time += 120) { // Generate a sample every 2 minutes
+            $samples[] = "$time:$value";
+            $value += rand(-1 * 1000, 1 * 1000) / 1000; // Add some random noise to the value
+        }
+        file_put_contents($datasetSamplesFile, implode("|", $samples) . "|", LOCK_EX);
+        aggregateData($hash, $dataset);
     }
-    file_put_contents($datasetSamplesFile, implode("|", $samples) . "|", LOCK_EX);
+    redirect('?graphurl=' . getUrl($hash) . '&secret=testing&name1=testdata');
 }
 
 function redirect($url): void {
