@@ -37,7 +37,7 @@ switch ($_SERVER['REQUEST_METHOD']) {
             if (str_starts_with($key, '_')) continue; // Skip if key starts with _ (e.g. _redirect)
             $fields[] = $key;
             $ds = validateDataset($key);
-            if ($secret === 'testing' && $ds === 'gen-test-data' && $value === '1') generateTestData($hash, $ds); // For testing purposes, generates a lot of random data for the last 3 months
+            if ($secret === 'testing' && $ds === 'testdata' && $value === '123') generateTestData($hash, $ds); // For testing purposes, generates a lot of random data
             $val = validateNumber($value);
             $datasetSamplesFile = DATA_DIR . $hash . '_' . $ds . '_samples.txt';
             $sample = "$time:$val|";
@@ -182,11 +182,10 @@ function generateTestData($hash, $ds): void {
     $now = time();
     $threeYearsAgo = $now - (3 * 365 * 24 * 60 * 60);
     $samples = [];
-    $value = 0;
-    $valueStep = (3 * 365 * 24 * 60 * 60) / 1000;
+    $value = 123;
     for ($time = $threeYearsAgo; $time <= $now; $time += 180) {
         $samples[] = "$time:$value";
-        $value += $valueStep + rand(-1 * 1000, 1 * 1000) / 1000; // Add some random noise to the value
+        $value += rand(-3 * 1000, 3 * 1000) / 1000; // Add some random noise to the value
     }
     file_put_contents($datasetSamplesFile, implode("|", $samples) . "|", LOCK_EX);
 }

@@ -1,7 +1,7 @@
 <?php
 
 // Config
-define('MAX_DATA_POINTS', 250);
+define('MAX_DATA_POINTS', 150);
 
 // Init
 $hash = $_GET['path'];
@@ -25,10 +25,10 @@ foreach ($aggregationLevelsMinutes as $level => $minutes) {
 // Get data for the graph
 $data = getAggregatedData($hash, $dataset, $aggregationLevel, time() - $periodInMinutes * 60);
 if (empty($data)) {
-    $chartDataJson = "[[{type: 'datetime', label: 'Time'},{type: 'number', label: 'Value'}],[new Date(0), 0]]";
+    $chartDataJson = "[[{type: 'datetime', label: 'Time'},{type: 'number', label: '$dataset'}],[new Date(0), 0]]";
 } else {
     // Convert data to format suitable for Google Charts
-    $chartDataJson = "[[{type: 'datetime', label: 'Time'}, {type: 'number', label: 'Value'}],";
+    $chartDataJson = "[[{type: 'datetime', label: 'Time'}, {type: 'number', label: '$dataset'}],";
     foreach ($data as $entry) {
         $datetime = 'new Date(' . $entry[0] * 1000 . ')';
         $chartDataJson .= "[$datetime, {$entry[1]}],";
