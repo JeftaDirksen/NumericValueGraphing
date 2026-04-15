@@ -1,11 +1,8 @@
-<?php
-
-?>
 <!DOCTYPE html>
 <html>
 
 <head>
-    <title>Submit Data</title>
+    <title>Numeric Value Graphing</title>
     <style>
         body {
             font-family: Verdana, Geneva, Tahoma, sans-serif;
@@ -20,6 +17,10 @@
 
         input[type="text"] {
             padding: 5px;
+        }
+
+        textarea {
+            resize: none;
         }
 
         input[type="submit"] {
@@ -38,9 +39,12 @@
 
 <body>
     <h1>Submit Data</h1>
+    <span>You can also submit data using curl like:</span><br />
+    <textarea rows="2" cols="100" readonly disabled>curl -d secret=MySecretString -d datasetA=1.0 -d datasetB=10.5 <?= getUrl() ?></textarea><br />
+    <br />
     <form method="POST" action="/">
         <label>Secret:</label>
-        <input type="text" id="secret" name="secret" value="<?php echo isset($_GET['secret']) ? htmlspecialchars($_GET['secret']) : ''; ?>" pattern="[A-Za-z0-9_\-]{5,50}" placeholder="MySecretString!" required><br />
+        <input type="text" id="secret" name="secret" value="<?php echo isset($_GET['secret']) ? htmlspecialchars($_GET['secret']) : ''; ?>" pattern="[A-Za-z0-9_\-]{5,50}" placeholder="MySecretString" required><br />
 
         <label>Dataset 1:</label>
         <input type="text" id="name1" name="name1" value="<?php echo isset($_GET['name1']) ? htmlspecialchars($_GET['name1']) : ''; ?>" pattern="[A-Za-z0-9_\-]{1,15}" placeholder="name"> =
