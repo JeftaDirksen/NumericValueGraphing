@@ -66,17 +66,6 @@ if (empty($data)) {
     $chartDataJson .= "]";
 }
 
-function getDatasets($hash): string {
-    // Iterate files in DATA_DIR and find the datasets for the given hash
-    $datasets = [];
-    foreach (glob(DATA_DIR . $hash . '_*_samples.txt') as $file) {
-        $filename = basename($file);
-        $parts = explode('_', $filename);
-        $datasets[] = $parts[1];
-    }
-    return implode(',', $datasets);
-}
-
 function getPeriodInMinutes($period): int {
     // Split period into number and unit.
     // If the regex does not match, defaults to 1 hour (60 minutes).

@@ -4,6 +4,7 @@
 ini_set('memory_limit', '512M');
 define('SCHEME', $_SERVER['HTTP_X_FORWARDED_PROTO'] ?? $_SERVER['REQUEST_SCHEME']);
 define('HOST', $_SERVER['HTTP_HOST']);
+define('ACCEPT', $_SERVER['HTTP_ACCEPT'] ?? '');
 define('DATA_DIR', '/data/');
 define('SECRET_PATTERN', '/^[A-Za-z0-9_-]{5,50}$/');
 define('DATASET_PATTERN', '/^[A-Za-z0-9-]{1,15}$/');
@@ -11,12 +12,45 @@ define('DATASET_PATTERN', '/^[A-Za-z0-9-]{1,15}$/');
 switch ($_SERVER['REQUEST_METHOD']) {
 
     case 'GET':
+        // Graph rendering response
         if (isset($_GET['path'])) {
-            include 'graph.php';
-            exit();
-        } else {
-            include 'form.php';
-            exit();
+
+            // HTML response
+            if (str_contains(ACCEPT, 'text/html')) {
+                include 'graph.php';
+                exit();
+            }
+
+            // API response
+            else {
+                $hash = $_GET['path'];
+                $datasets = getDatasets($hash);
+                $response = ['datasets' => $datasets];
+                header('Content-Type: application/json');
+                echo json_encode($response, JSON_PRETTY_PRINT);
+                exit();
+            }
+        }
+
+        // No path specified, show form for browser or usage instructions for API clients
+        else {
+
+            // HTML response
+            if (str_contains(ACCEPT, 'text/html')) {
+                include 'form.php';
+                exit();
+            }
+
+            // API response
+            else {
+                $url = getUrl();
+                $usage = "Usage:\n"
+                    . "To submit data: POST with fields 'secret', 'dataset1', 'dataset2', ... \n"
+                    . "Example: curl -d secret=YourSecretString -d line1data=3 -d line2data=4.5 $url\n";
+                header('Content-Type: text/plain');
+                echo $usage;
+                exit();
+            }
         }
         break;
 
@@ -34,7 +68,6 @@ switch ($_SERVER['REQUEST_METHOD']) {
         $fields = [];
         foreach ($_POST as $key => $value) {
             if ($key === 'secret') continue; // Skip secret field
-            if (str_starts_with($key, '_')) continue; // Skip if key starts with _ (e.g. _redirect)
             $fields[] = $key;
             $ds = validateDataset($key);
             if ($secret === 'testing' && $ds === 'testdata' && $value === '123') generateTestData($hash); // For testing purposes, generates a lot of random data
@@ -45,10 +78,21 @@ switch ($_SERVER['REQUEST_METHOD']) {
             aggregateData($hash, $ds);
         }
 
-        if (isset($_POST['_redirect'])) {
+        // HTML response
+        if (str_contains(ACCEPT, 'text/html')) {
             redirect('?graphurl=' . getUrl($hash) . '&secret=' . $secret . '&name1=' . ($fields[0] ?? '') . '&name2=' . ($fields[1] ?? '') . '&name3=' . ($fields[2] ?? '') . '&name4=' . ($fields[3] ?? '') . '&name5=' . ($fields[4] ?? ''));
         }
-        exit(getUrl($hash));
+
+        // API response
+        else {
+            header('Content-Type: application/json');
+            $response = [
+                'url' => getUrl($hash),
+                'datasets' => getDatasets($hash)
+            ];
+            echo json_encode($response, JSON_PRETTY_PRINT);
+        }
+        exit();
 
     default:
         http_response_code(405);
@@ -238,8 +282,8 @@ function validateNumber($number): float {
     return (float)$number;
 }
 
-function getUrl($hash): string {
-    return SCHEME . '://' . HOST . '/' . $hash;
+function getUrl($hash = ''): string {
+    return rtrim(SCHEME . '://' . HOST . '/' . $hash, '/');
 }
 
 function getAggregatedData($hash, $dataset, $aggregationLevel, $from = 0): array {
@@ -305,4 +349,15 @@ function getSamples($hash, $dataset): array {
 
 function htmlUrl($url): string {
     return '<a href="' . $url . '" target="_blank">' . $url . '</a>';
+}
+
+function getDatasets($hash): string {
+    // Iterate files in DATA_DIR and find the datasets for the given hash
+    $datasets = [];
+    foreach (glob(DATA_DIR . $hash . '_*_samples.txt') as $file) {
+        $filename = basename($file);
+        $parts = explode('_', $filename);
+        $datasets[] = $parts[1];
+    }
+    return implode(',', $datasets);
 }

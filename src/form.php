@@ -62,7 +62,6 @@
         <input type="text" id="name5" name="name5" value="<?php echo isset($_GET['name5']) ? htmlspecialchars($_GET['name5']) : ''; ?>" pattern="[A-Za-z0-9_\-]{1,15}" placeholder="name"> =
         <input type="number" id="value5" name="value5" step="any" pattern="[0-9.]{1,10}" placeholder="value"><br />
 
-        <input type="hidden" name="_redirect" value="1">
         <input type="submit" value="Submit"> <span class="msg ok"><?php echo isset($_GET['graphurl']) ? 'OK - Graph URL: ' . htmlUrl($_GET['graphurl']) : ''; ?></span>
     </form>
 
