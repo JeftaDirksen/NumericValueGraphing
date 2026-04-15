@@ -16,6 +16,7 @@ if (METHOD === 'GET' && HTML) {
 
     // Graph request
     if (isset($_GET['path'])) {
+        $data['title'] = 'Numeric Value Graph - ' . str_replace(',', ' ', getDatasets($_GET['path']));
         $data['chartDataJson'] = generateGraphData();
         response_file('graph.php', $data);
     }
