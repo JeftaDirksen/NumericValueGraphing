@@ -84,17 +84,16 @@ if (METHOD === 'POST') {
 
     // API response
     if (!HTML) {
-        $response = [
-            'url' => getUrl($hash),
-            'datasets' => getDatasets($hash)
-        ];
-        response(json_encode($response, JSON_PRETTY_PRINT), 'application/json');
+        $response = ['url' => getUrl($hash)];
+        response(json_encode($response, JSON_UNESCAPED_SLASHES), 'application/json');
     }
 }
 
 response('Method not allowed', 'text/plain', 405);
 
 function response($data = '', $contenttype = 'text/html', $status = 200): void {
+    // End data with newline if not already present for better readability in terminal when using curl command
+    if (substr($data, -1) !== "\n") $data .= "\n";
     http_response_code($status);
     header("Content-Type: $contenttype");
     exit($data);
