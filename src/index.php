@@ -4,101 +4,107 @@
 ini_set('memory_limit', '512M');
 define('SCHEME', $_SERVER['HTTP_X_FORWARDED_PROTO'] ?? $_SERVER['REQUEST_SCHEME']);
 define('HOST', $_SERVER['HTTP_HOST']);
-define('ACCEPT', $_SERVER['HTTP_ACCEPT'] ?? '');
+define('METHOD', $_SERVER['REQUEST_METHOD']);
+define('HTML', str_contains($_SERVER['HTTP_ACCEPT'], 'text/html'));
 define('DATA_DIR', '/data/');
 define('SECRET_PATTERN', '/^[A-Za-z0-9_-]{5,50}$/');
 define('DATASET_PATTERN', '/^[A-Za-z0-9-]{1,15}$/');
 define('MAX_DATA_POINTS', 250);
 
-switch ($_SERVER['REQUEST_METHOD']) {
+// Browser request
+if (METHOD === 'GET' && HTML) {
 
-    case 'GET':
-        // Graph rendering response
-        if (isset($_GET['path'])) {
+    // Graph request
+    if (isset($_GET['path'])) {
+        $data['chartDataJson'] = generateGraphData();
+        response_file('graph.php', $data);
+    }
 
-            // HTML response
-            if (str_contains(ACCEPT, 'text/html')) {
-                $chartDataJson = generateGraphData();
-                include 'graph.php';
-                exit();
-            }
+    // Show form
+    else {
+        response_file('form.php');
+    }
+}
 
-            // API response
-            else {
-                $hash = $_GET['path'];
-                $datasets = getDatasets($hash);
-                $response = ['datasets' => $datasets];
-                header('Content-Type: application/json');
-                echo json_encode($response, JSON_PRETTY_PRINT);
-                exit();
-            }
-        }
+// API request
+if (METHOD === 'GET' && !HTML) {
 
-        // No path specified, show form for browser or usage instructions for API clients
-        else {
+    // Datasets request
+    if (isset($_GET['path'])) {
+        $hash = $_GET['path'];
+        $datasets = getDatasets($hash);
+        $response = ['datasets' => $datasets];
+        response(json_encode($response, JSON_PRETTY_PRINT), 'application/json');
+    }
 
-            // HTML response
-            if (str_contains(ACCEPT, 'text/html')) {
-                include 'form.php';
-                exit();
-            }
+    // API Usage instructions
+    else {
+        $url = getUrl();
+        $usage = "Usage:\n"
+            . "To submit data: POST with fields 'secret', 'dataset1', 'dataset2', ... \n"
+            . "Example: curl -d secret=YourSecretString -d line1data=3 -d line2data=4.5 $url\n";
+        response($usage, 'text/plain');
+    }
+}
 
-            // API response
-            else {
-                $url = getUrl();
-                $usage = "Usage:\n"
-                    . "To submit data: POST with fields 'secret', 'dataset1', 'dataset2', ... \n"
-                    . "Example: curl -d secret=YourSecretString -d line1data=3 -d line2data=4.5 $url\n";
-                header('Content-Type: text/plain');
-                echo $usage;
-                exit();
-            }
-        }
-        break;
+// POST
+if (METHOD === 'POST') {
 
-    case 'POST':
-        if (isset($_GET['path'])) {
-            http_response_code(405);
-            exit('Method not allowed on this endpoint');
-        }
+    // Wrong URL
+    if (isset($_GET['path'])) {
+        response('Method not allowed on this endpoint', 'text/plain', 405);
+    }
 
-        $secret = $_POST['secret'] ?? '';
-        $hash = validateSecret($secret);
-        $time = time();
+    // Store data
+    $secret = $_POST['secret'] ?? '';
+    $hash = validateSecret($secret);
+    $time = time();
+    $fields = [];
+    foreach ($_POST as $key => $value) {
+        if ($key === 'secret') continue; // Skip secret field
+        $fields[] = $key;
+        $ds = validateDataset($key);
+        if ($secret === 'testing' && $ds === 'testdata' && $value === '123') generateTestData($hash); // For testing purposes, generates a lot of random data
+        $val = validateNumber($value);
+        $datasetSamplesFile = DATA_DIR . $hash . '_' . $ds . '_samples.txt';
+        $sample = "$time:$val|";
+        file_put_contents($datasetSamplesFile, $sample, FILE_APPEND | LOCK_EX);
+        aggregateData($hash, $ds);
+    }
 
-        // Iterate datasets (POST fields)
-        $fields = [];
-        foreach ($_POST as $key => $value) {
-            if ($key === 'secret') continue; // Skip secret field
-            $fields[] = $key;
-            $ds = validateDataset($key);
-            if ($secret === 'testing' && $ds === 'testdata' && $value === '123') generateTestData($hash); // For testing purposes, generates a lot of random data
-            $val = validateNumber($value);
-            $datasetSamplesFile = DATA_DIR . $hash . '_' . $ds . '_samples.txt';
-            $sample = "$time:$val|";
-            file_put_contents($datasetSamplesFile, $sample, FILE_APPEND | LOCK_EX);
-            aggregateData($hash, $ds);
-        }
+    // HTML response
+    if (HTML) {
+        $fields = "&name1=" . ($fields[0] ?? '')
+            . "&name2=" . ($fields[1] ?? '')
+            . "&name3=" . ($fields[2] ?? '')
+            . "&name4=" . ($fields[3] ?? '')
+            . "&name5=" . ($fields[4] ?? '');
+        redirect('?graphurl=' . getUrl($hash) . '&secret=' . $secret . $fields);
+    }
 
-        // HTML response
-        if (str_contains(ACCEPT, 'text/html')) {
-            redirect('?graphurl=' . getUrl($hash) . '&secret=' . $secret . '&name1=' . ($fields[0] ?? '') . '&name2=' . ($fields[1] ?? '') . '&name3=' . ($fields[2] ?? '') . '&name4=' . ($fields[3] ?? '') . '&name5=' . ($fields[4] ?? ''));
-        }
+    // API response
+    if (!HTML) {
+        $response = [
+            'url' => getUrl($hash),
+            'datasets' => getDatasets($hash)
+        ];
+        response(json_encode($response, JSON_PRETTY_PRINT), 'application/json');
+    }
+}
 
-        // API response
-        else {
-            header('Content-Type: application/json');
-            $response = [
-                'url' => getUrl($hash),
-                'datasets' => getDatasets($hash)
-            ];
-            echo json_encode($response, JSON_PRETTY_PRINT);
-        }
-        exit();
+response('Method not allowed', 'text/plain', 405);
 
-    default:
-        http_response_code(405);
-        exit('Method not allowed');
+function response($data = '', $contenttype = 'text/html', $status = 200): void {
+    http_response_code($status);
+    header("Content-Type: $contenttype");
+    exit($data);
+}
+
+function response_file($filename, $data = []): void {
+    ob_start();
+    include $filename;
+    $content = ob_get_clean();
+    response($content);
 }
 
 function generateGraphData(): string {
@@ -107,7 +113,9 @@ function generateGraphData(): string {
     $datasets = $_GET['datasets'] ?? getDatasets($hash);
 
     // Put variables in URL if not present
-    if (!isset($_GET['period']) || !isset($_GET['datasets'])) redirect($hash . '?period=' . $period . '&datasets=' . $datasets);
+    if (!isset($_GET['period']) || !isset($_GET['datasets'])) {
+        redirect($hash . '?period=' . $period . '&datasets=' . $datasets);
+    }
 
     // Calculate smallest aggregation level that keeps the number of data points under MAX_DATA_POINTS
     $periodInMinutes = getPeriodInMinutes($period);
@@ -127,10 +135,13 @@ function generateGraphData(): string {
         $data[$dataset] = getAggregatedData($hash, $dataset, $aggregationLevel, time() - $periodInMinutes * 60);
     }
 
+    // No data to show
     if (empty($data)) {
         $chartDataJson = "[[{type: 'datetime', label: 'Time'},{type: 'number', label: 'Data'}],[new Date(0), 0]]";
-    } else {
-        // Convert data to format suitable for Google Charts with multiple datasets
+    }
+
+    // Convert data to format suitable for Google Charts with multiple datasets
+    else {
         $chartDataJson = "[[{type: 'datetime', label: 'Time'}";
         foreach ($data as $dataset => $entries) {
             $chartDataJson .= ", {type: 'number', label: '$dataset'}";
@@ -163,6 +174,7 @@ function generateGraphData(): string {
         }
         $chartDataJson .= "]";
     }
+
     return $chartDataJson;
 }
 
@@ -314,37 +326,32 @@ function redirect($url): void {
         $url = SCHEME . '://' . HOST . '/' . ltrim($url, '/');
     }
     header('Location: ' . $url);
-    exit();
+    exit('Redirecting to ' . $url);
 }
 
 function validateSecret($secret): string {
     if (empty($secret)) {
-        http_response_code(400);
-        exit('Secret is required');
+        response('Secret is required', 'text/plain', 400);
     }
     if (!preg_match(SECRET_PATTERN, $secret)) {
-        http_response_code(400);
-        exit('Secret must be between 5 and 50 characters long and can only contain letters, numbers, underscores and dashes');
+        response('Secret must be between 5 and 50 characters long and can only contain letters, numbers, underscores and dashes', 'text/plain', 400);
     }
     return hash('sha256', $secret . HOST);
 }
 
 function validateDataset($dataset): string {
     if (!preg_match(DATASET_PATTERN, $dataset)) {
-        http_response_code(400);
-        exit('Dataset names must be between 1 and 10 characters long and can only contain letters, numbers and dashes');
+        response('Dataset names must be between 1 and 15 characters long and can only contain letters, numbers and dashes', 'text/plain', 400);
     }
     return $dataset;
 }
 
 function validateNumber($number): float {
     if (!is_numeric($number)) {
-        http_response_code(400);
-        exit('Not a valid number');
+        response("Not a valid number ($number)", 'text/plain', 400);
     }
     if (strlen($number) > 10) {
-        http_response_code(400);
-        exit('Number must be less than 10 characters long');
+        response('Number must be less than 10 characters long', 'text/plain', 400);
     }
     return (float)$number;
 }

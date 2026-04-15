@@ -10,7 +10,7 @@
         google.charts.setOnLoadCallback(drawChart);
 
         function drawChart() {
-            var data = google.visualization.arrayToDataTable(<?= $chartDataJson ?>);
+            var data = google.visualization.arrayToDataTable(<?= $data['chartDataJson'] ?>);
             var options = {
                 title: 'Numeric Value Graph',
                 curveType: 'function',
