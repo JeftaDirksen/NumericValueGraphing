@@ -8,7 +8,7 @@ define('METHOD', $_SERVER['REQUEST_METHOD']);
 define('HTML', str_contains($_SERVER['HTTP_ACCEPT'], 'text/html'));
 define('DATA_DIR', '/data/');
 define('SECRET_PATTERN', '/^[A-Za-z0-9_-]{5,50}$/');
-define('DATASET_PATTERN', '/^[A-Za-z0-9-]{1,15}$/');
+define('DATASET_PATTERN', '/^[a-z0-9-]{1,15}$/');
 define('AGGREGATION_LEVELS', ['minutes', 'quarters', 'hours', 'days', 'weeks', 'months', 'years']);
 define('MAX_DATA_POINTS', 250);
 
@@ -335,7 +335,7 @@ function getConfig(): array {
 
 function validateDataset($dataset): string {
     if (!preg_match(DATASET_PATTERN, $dataset)) {
-        response('Dataset names must be between 1 and 15 characters long and can only contain letters, numbers and dashes', 'text/plain', 400);
+        response('Dataset names must be between 1 and 15 characters long and can only contain lowercase letters, numbers and dashes', 'text/plain', 400);
     }
     return $dataset;
 }
