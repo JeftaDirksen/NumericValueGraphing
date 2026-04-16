@@ -168,7 +168,7 @@ function generateGraphData(): string {
                         break;
                     }
                 }
-                $chartDataJson .= ", $value";
+                $chartDataJson .= ", " . ($value === null ? 'null' : $value);
             }
             $chartDataJson .= "]";
         }
@@ -180,6 +180,7 @@ function generateGraphData(): string {
 
 function aggregateData($hash, $dataset): void {
     aggregateSamples($hash, $dataset);
+
     aggregatePeriods("minutes", "quarters", $hash, $dataset);
     aggregatePeriods("quarters", "hours", $hash, $dataset);
     aggregatePeriods("hours", "days", $hash, $dataset);
@@ -187,7 +188,35 @@ function aggregateData($hash, $dataset): void {
     aggregatePeriods("days", "months", $hash, $dataset);
     aggregatePeriods("months", "years", $hash, $dataset);
 
-    // TODO: Cleanup old data
+    cleanupData($hash, $dataset);
+}
+
+function cleanupData($hash, $dataset): void {
+    cleanupPeriod("minutes", $hash, $dataset);
+    cleanupPeriod("quarters", $hash, $dataset);
+    cleanupPeriod("hours", $hash, $dataset);
+    cleanupPeriod("days", $hash, $dataset);
+    cleanupPeriod("weeks", $hash, $dataset);
+    cleanupPeriod("months", $hash, $dataset);
+    cleanupPeriod("years", $hash, $dataset);
+}
+
+function cleanupPeriod($period, $hash, $dataset): void {
+    // Load data
+    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $period . '.txt';
+    if (!file_exists($file)) return;
+    $data = file_get_contents($file);
+    $array = explode('|', trim($data, '|'));
+    $data = array_map(function ($entry) {
+        list($timestamp, $values) = explode(':', $entry);
+        return [(int)$timestamp, $values];
+    }, $array);
+    // Only keep last MAX_DATA_POINTS data points
+    $data = array_slice($data, -MAX_DATA_POINTS);
+    // Write back to file
+    file_put_contents($file, implode('|', array_map(function ($entry) {
+        return $entry[0] . ':' . $entry[1];
+    }, $data)) . '|', LOCK_EX);
 }
 
 function aggregateSamples($hash, $dataset): void {
