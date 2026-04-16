@@ -313,14 +313,24 @@ function redirect($url): void {
     exit('Redirecting to ' . $url);
 }
 
-function validateSecret($secret): string {
+function validateSecret(string $secret): string {
+    $config = getConfig();
     if (empty($secret)) {
         response('Secret is required', 'text/plain', 400);
     }
     if (!preg_match(SECRET_PATTERN, $secret)) {
         response('Secret must be between 5 and 50 characters long and can only contain letters, numbers, underscores and dashes', 'text/plain', 400);
     }
-    return hash('sha256', $secret . HOST);
+    return substr(hash('sha256', $secret . $config['salt']), 0, 16);
+}
+
+function getConfig(): array {
+    $configFile = DATA_DIR . 'config.json';
+    if (!file_exists($configFile)) {
+        $salt = bin2hex(random_bytes(16));
+        file_put_contents($configFile, json_encode(['salt' => $salt], JSON_PRETTY_PRINT));
+    }
+    return json_decode(file_get_contents($configFile), true);
 }
 
 function validateDataset($dataset): string {
