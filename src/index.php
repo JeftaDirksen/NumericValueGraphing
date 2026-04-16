@@ -9,6 +9,7 @@ define('HTML', str_contains($_SERVER['HTTP_ACCEPT'], 'text/html'));
 define('DATA_DIR', '/data/');
 define('SECRET_PATTERN', '/^[A-Za-z0-9_-]{5,50}$/');
 define('DATASET_PATTERN', '/^[A-Za-z0-9-]{1,15}$/');
+define('AGGREGATION_LEVELS', ['minutes', 'quarters', 'hours', 'days', 'weeks', 'months', 'years']);
 define('MAX_DATA_POINTS', 250);
 
 // Browser request
@@ -67,9 +68,7 @@ if (METHOD === 'POST') {
         $ds = validateDataset($key);
         if ($secret === 'testing' && $ds === 'testdata' && $value === '123') generateTestData($hash); // For testing purposes, generates a lot of random data
         $val = validateNumber($value);
-        $datasetSamplesFile = DATA_DIR . $hash . '_' . $ds . '_samples.txt';
-        $sample = "$time:$val|";
-        file_put_contents($datasetSamplesFile, $sample, FILE_APPEND | LOCK_EX);
+        appendData($hash, $ds, 'samples', [$time, $val]);
         aggregateData($hash, $ds);
     }
 
@@ -132,7 +131,7 @@ function generateGraphData(): string {
     // Iterate datasets and get data for each
     $data = [];
     foreach (explode(',', $datasets) as $dataset) {
-        $data[$dataset] = getAggregatedData($hash, $dataset, $aggregationLevel, time() - $periodInMinutes * 60);
+        $data[$dataset] = loadData($hash, $dataset, $aggregationLevel, time() - $periodInMinutes * 60);
     }
 
     // No data to show
@@ -181,172 +180,128 @@ function generateGraphData(): string {
 function aggregateData($hash, $dataset): void {
     aggregateSamples($hash, $dataset);
 
-    aggregatePeriods("minutes", "quarters", $hash, $dataset);
-    aggregatePeriods("quarters", "hours", $hash, $dataset);
-    aggregatePeriods("hours", "days", $hash, $dataset);
-    aggregatePeriods("days", "weeks", $hash, $dataset);
-    aggregatePeriods("days", "months", $hash, $dataset);
-    aggregatePeriods("months", "years", $hash, $dataset);
+    aggregateLevel("minutes", "quarters", $hash, $dataset);
+    aggregateLevel("quarters", "hours", $hash, $dataset);
+    aggregateLevel("hours", "days", $hash, $dataset);
+    aggregateLevel("days", "weeks", $hash, $dataset);
+    aggregateLevel("days", "months", $hash, $dataset);
+    aggregateLevel("months", "years", $hash, $dataset);
 
     cleanupData($hash, $dataset);
 }
 
 function cleanupData($hash, $dataset): void {
-    cleanupPeriod("minutes", $hash, $dataset);
-    cleanupPeriod("quarters", $hash, $dataset);
-    cleanupPeriod("hours", $hash, $dataset);
-    cleanupPeriod("days", $hash, $dataset);
-    cleanupPeriod("weeks", $hash, $dataset);
-    cleanupPeriod("months", $hash, $dataset);
-    cleanupPeriod("years", $hash, $dataset);
-}
-
-function cleanupPeriod($period, $hash, $dataset): void {
-    // Load data
-    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $period . '.txt';
-    if (!file_exists($file)) return;
-    $data = file_get_contents($file);
-    $array = explode('|', trim($data, '|'));
-    $data = array_map(function ($entry) {
-        list($timestamp, $values) = explode(':', $entry);
-        return [(int)$timestamp, $values];
-    }, $array);
-    // Only keep last MAX_DATA_POINTS data points
-    $data = array_slice($data, -MAX_DATA_POINTS);
-    // Write back to file
-    file_put_contents($file, implode('|', array_map(function ($entry) {
-        return $entry[0] . ':' . $entry[1];
-    }, $data)) . '|', LOCK_EX);
+    foreach (AGGREGATION_LEVELS as $aggLevel) {
+        $data = loadData($hash, $dataset, $aggLevel);
+        if ($data === []) continue;
+        saveData($hash, $dataset, $aggLevel, array_slice($data, -MAX_DATA_POINTS));
+    }
 }
 
 function aggregateSamples($hash, $dataset): void {
+    $cur_minute = getPeriodTimestamp(time(), 'minutes');
+    $samples = loadData($hash, $dataset, 'samples');
+    if ($samples === []) return;  // No samples to aggregate
 
-    $cur_time = time();
-    $cur_minute = getPeriodTimestamp($cur_time, 'minutes');
+    $first_minute = getPeriodTimestamp($samples[0][0], 'minutes');
+    if ($first_minute >= $cur_minute) return;  // No samples to aggregate yet
 
-    // Get samples for the dataset
-    $samplesFile = DATA_DIR . $hash . '_' . $dataset . '_samples.txt';
-    $samplesData = file_get_contents($samplesFile);
-    $samplesArray = explode('|', trim($samplesData, '|'));
-    $samples = array_map(function ($sample) {
-        list($timestamp, $value) = explode(':', $sample);
-        return [(int)$timestamp, (float)$value];
-    }, $samplesArray);
+    $minutes = loadData($hash, $dataset, 'minutes');
+    $aggregated = [];
+    $bucket = ['sum' => 0, 'count' => 0, 'min' => null, 'max' => null, 'last' => null];
+    $minute = $first_minute;
 
-    // Aggregate samples into minutes and store in a separate file
-    $first_sample_minute = getPeriodTimestamp($samples[0][0], 'minutes');
-    if ($first_sample_minute < $cur_minute) {
-        $minute = $first_sample_minute;
-        $count = 0;
-        $sum = 0;
-        $min = null;
-        $max = null;
-        $last = null;
-        foreach ($samples as $sample) {
-            $sample_minute = getPeriodTimestamp($sample[0], 'minutes');
-
-            // If we've moved to the next minute, calculate and store the aggregate for the previous minute
-            if ($sample_minute > $minute) {
-                $avg = $count > 0 ? $sum / $count : 0;
-                $aggMinutesFile = DATA_DIR . $hash . '_' . $dataset . '_minutes.txt';
-                $minuteData = "$minute:$avg,$min,$max,$last|";
-                file_put_contents($aggMinutesFile, $minuteData, FILE_APPEND | LOCK_EX);
-
-                // Reset for the new minute
-                $minute = $sample_minute;
-                $count = 0;
-                $sum = 0;
-                $min = null;
-                $max = null;
-                $last = null;
-
-                if ($minute >= $cur_minute) {
-                    break; // Stop if we've reached the current minute
-                }
-            }
-
-            // Aggregate data for the minute
-            $count++;
-            $sum += $sample[1];
-            if ($min === null || $sample[1] < $min) {
-                $min = $sample[1];
-            }
-            if ($max === null || $sample[1] > $max) {
-                $max = $sample[1];
-            }
-            $last = $sample[1];
+    foreach ($samples as $index => [$timestamp, $value]) {
+        $sample_minute = getPeriodTimestamp($timestamp, 'minutes');
+        if ($sample_minute >= $cur_minute) {
+            $remainingSamples = array_slice($samples, $index);
+            break;
         }
 
-        // Remove processed samples
-        $remainingSamples = array_filter($samples, function ($sample) use ($cur_minute) {
-            return $sample[0] >= $cur_minute;
-        });
+        if ($sample_minute !== $minute) {
+            if ($bucket['count'] > 0) {
+                $aggregated[] = [$minute, $bucket['sum'] / $bucket['count'], $bucket['min'], $bucket['max'], $bucket['last']];
+            }
+            $minute = $sample_minute;
+            $bucket = ['sum' => 0, 'count' => 0, 'min' => null, 'max' => null, 'last' => null];
+        }
 
-        // Save remaining samples back to file
-        $datasetSamplesFile = DATA_DIR . $hash . '_' . $dataset . '_samples.txt';
-        file_put_contents($datasetSamplesFile, implode('|', array_map(function ($sample) {
-            return $sample[0] . ':' . $sample[1];
-        }, $remainingSamples)) . '|', LOCK_EX);
+        $bucket['sum'] += $value;
+        $bucket['count']++;
+        $bucket['min'] = $bucket['min'] === null || $value < $bucket['min'] ? $value : $bucket['min'];
+        $bucket['max'] = $bucket['max'] === null || $value > $bucket['max'] ? $value : $bucket['max'];
+        $bucket['last'] = $value;
     }
+
+    if (!isset($remainingSamples)) {
+        $remainingSamples = [];
+    }
+
+    if ($bucket['count'] > 0 && $minute < $cur_minute) {
+        $aggregated[] = [$minute, $bucket['sum'] / $bucket['count'], $bucket['min'], $bucket['max'], $bucket['last']];
+    }
+
+    if ($aggregated !== []) {
+        $minutes = array_merge($minutes, $aggregated);
+        saveData($hash, $dataset, 'minutes', $minutes);
+    }
+
+    saveData($hash, $dataset, 'samples', $remainingSamples);
 }
 
-function aggregatePeriods($fromPeriod, $toPeriod, $hash, $dataset): void {
-    // Get relevant data for aggregation
-    $fromData = getAggregatedData($hash, $dataset, $fromPeriod);
-    if (empty($fromData)) return;
-    $toData = getAggregatedData($hash, $dataset, $toPeriod);
+function aggregateLevel(string $fromLevel, string $toLevel, string $hash, string $dataset): void {
+    // Load data
+    $fromData = loadData($hash, $dataset, $fromLevel);
+    if ($fromData === []) return;
+    $toData = loadData($hash, $dataset, $toLevel);
 
-    // Determine the last period that has already been aggregated in the target period to avoid re-aggregating data
-    $lastToDataPeriod = end($toData)[0] ?? 0;
-    $currentToPeriod = getPeriodTimestamp(time(), $toPeriod);
-
-    // Aggregate data
+    $lastToDataPeriod = $toData !== [] ? $toData[array_key_last($toData)][0] : 0;
+    $currentToPeriod = getPeriodTimestamp(time(), $toLevel);
     $periodData = [];
-    foreach ($fromData as $entry) {
-        $thisToPeriod = getPeriodTimestamp($entry[0], $toPeriod);
-        if ($thisToPeriod <= $lastToDataPeriod) continue; // Skip already aggregated periods
-        if ($thisToPeriod >= $currentToPeriod) break; // Don't aggregate current period
-        if (!isset($periodData[$thisToPeriod])) $periodData[$thisToPeriod] = ['sum' => 0, 'count' => 0, 'min' => null, 'max' => null, 'last' => null];
-        $periodData[$thisToPeriod]['sum'] += $entry[1]; // avg value from lower period is used for aggregation
-        $periodData[$thisToPeriod]['count']++;
-        if ($periodData[$thisToPeriod]['min'] === null || $entry[2] < $periodData[$thisToPeriod]['min']) {
-            $periodData[$thisToPeriod]['min'] = $entry[2];
+
+    foreach ($fromData as [$timestamp, $avg, $min, $max, $last]) {
+        $thisToPeriod = getPeriodTimestamp($timestamp, $toLevel);
+        if ($thisToPeriod <= $lastToDataPeriod) continue;  // Skip if we already have data for this period
+        if ($thisToPeriod >= $currentToPeriod) break;      // Stop if we've reached the current period
+
+        $bucket = &$periodData[$thisToPeriod];
+        if (!isset($bucket)) {
+            $bucket = ['sum' => 0, 'count' => 0, 'min' => $min, 'max' => $max, 'last' => $last];
         }
-        if ($periodData[$thisToPeriod]['max'] === null || $entry[3] > $periodData[$thisToPeriod]['max']) {
-            $periodData[$thisToPeriod]['max'] = $entry[3];
-        }
-        $periodData[$thisToPeriod]['last'] = $entry[4];
+        $bucket['sum'] += $avg;
+        $bucket['count']++;
+        $bucket['min'] = $min < $bucket['min'] ? $min : $bucket['min'];
+        $bucket['max'] = $max > $bucket['max'] ? $max : $bucket['max'];
+        $bucket['last'] = $last;
+        unset($bucket);
     }
 
-    // Stop if there's no new data to aggregate
-    if (empty($periodData)) return;
+    if ($periodData === []) return;  // No new data to aggregate
 
-    // Write aggregated data to file
-    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $toPeriod . '.txt';
-    $dataString = "";
+    // Convert and save aggregated data
     foreach ($periodData as $period => $data) {
-        $avg = $data['count'] > 0 ? $data['sum'] / $data['count'] : 0;
-        $periodDataString = "$period:$avg,{$data['min']},{$data['max']},{$data['last']}|";
-        $dataString .= $periodDataString;
+        $toData[] = [$period, $data['sum'] / $data['count'], $data['min'], $data['max'], $data['last']];
     }
-    file_put_contents($file, $dataString, FILE_APPEND | LOCK_EX);
+    saveData($hash, $dataset, $toLevel, $toData);
 }
 
 function generateTestData($hash): void {
     $datasets = ['testdata1', 'testdata2', 'testdata3'];
+    $now = time();
+    $twoYearsAgo = $now - (2 * 365 * 24 * 60 * 60);
+
     foreach ($datasets as $dataset) {
-        $datasetSamplesFile = DATA_DIR . $hash . '_' . $dataset . '_samples.txt';
-        $now = time();
-        $twoYearsAgo = $now - (2 * 365 * 24 * 60 * 60);
         $samples = [];
-        $value = 0;
-        for ($time = $twoYearsAgo; $time <= $now; $time += 120) { // Generate a sample every 2 minutes
-            $samples[] = "$time:$value";
-            $value += rand(-1 * 1000, 1 * 1000) / 1000; // Add some random noise to the value
+        $value = 0.0;
+        for ($timestamp = $twoYearsAgo; $timestamp <= $now; $timestamp += 120) {
+            $samples[] = [$timestamp, $value];
+            $value += rand(-1000, 1000) / 1000;
         }
-        file_put_contents($datasetSamplesFile, implode("|", $samples) . "|", LOCK_EX);
+
+        saveData($hash, $dataset, 'samples', $samples);
         aggregateData($hash, $dataset);
     }
+
     redirect('?graphurl=' . getUrl($hash) . '&secret=testing&name1=testdata');
 }
 
@@ -389,19 +344,27 @@ function getUrl($hash = ''): string {
     return rtrim(SCHEME . '://' . HOST . '/' . $hash, '/');
 }
 
-function getAggregatedData($hash, $dataset, $aggregationLevel, $from = 0): array {
-    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $aggregationLevel . '.txt';
+function loadData($hash, $dataset, $type, $from = 0): array {
+    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $type . '.json';
     if (!file_exists($file)) return [];
-    $data = file_get_contents($file);
-    $array = explode('|', trim($data, '|'));
-    $data = array_map(function ($entry) {
-        list($timestamp, $values) = explode(':', $entry);
-        list($avg, $min, $max, $last) = explode(',', $values);
-        return [(int)$timestamp, (float)$avg, (float)$min, (float)$max, (float)$last];
-    }, $array);
-    return array_filter($data, function ($entry) use ($from) {
-        return $entry[0] >= $from;
-    });
+    $data = json_decode(file_get_contents($file), true);
+    if ($from > 0) {
+        $data = array_filter($data, function ($entry) use ($from) {
+            return $entry[0] >= $from;
+        });
+    }
+    return $data;
+}
+
+function saveData($hash, $dataset, $type, $data): void {
+    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $type . '.json';
+    file_put_contents($file, json_encode($data), LOCK_EX);
+}
+
+function appendData($hash, $dataset, $type, $entry): void {
+    $data = loadData($hash, $dataset, $type);
+    $data[] = $entry;
+    saveData($hash, $dataset, $type, $data);
 }
 
 function getPeriodTimestamp($timestamp, $period): int {
@@ -474,19 +437,6 @@ function getPeriodInMinutes($period): int {
     }
 }
 
-function getSamples($hash, $dataset): array {
-    $samplesFile = DATA_DIR . $hash . '_' . $dataset . '_samples.txt';
-    if (!file_exists($samplesFile)) {
-        return [];
-    }
-    $samplesData = file_get_contents($samplesFile);
-    $samplesArray = explode('|', trim($samplesData, '|'));
-    return array_map(function ($sample) {
-        list($timestamp, $value) = explode(':', $sample);
-        return [(int)$timestamp, (float)$value];
-    }, $samplesArray);
-}
-
 function htmlUrl($url): string {
     return '<a href="' . $url . '" target="_blank">' . $url . '</a>';
 }
@@ -494,7 +444,7 @@ function htmlUrl($url): string {
 function getDatasets($hash): string {
     // Iterate files in DATA_DIR and find the datasets for the given hash
     $datasets = [];
-    foreach (glob(DATA_DIR . $hash . '_*_samples.txt') as $file) {
+    foreach (glob(DATA_DIR . $hash . '_*_samples.json') as $file) {
         $filename = basename($file);
         $parts = explode('_', $filename);
         $datasets[] = $parts[1];
