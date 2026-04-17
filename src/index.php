@@ -106,6 +106,29 @@ function response_file($filename, $data = []): void {
     response($content);
 }
 
+function dsStringToArray(string $dsString): array {
+    $dsArray = [];
+
+    // Split the string by commas, trim whitespace, and filter out empty entries
+    $dsStrings = array_filter(array_map('trim', explode(',', $dsString)), fn ($ds) => $ds !== '');
+
+    foreach ($dsStrings as $ds) {
+        // Split each dataset string into name and type, defaulting to 'avg' if type is not provided
+        [$name, $type] = array_pad(explode(':', $ds, 2), 2, 'avg');
+        $dsArray[] = ['name' => $name, 'type' => $type];
+    }
+
+    return $dsArray;
+}
+
+function dsArrayToString(array $dsArray): string {
+    $dsStrings = array_map(
+        fn ($ds) => $ds['name'] . ':' . ($ds['type'] ?? 'avg'),
+        $dsArray
+    );
+    return implode(',', $dsStrings);
+}
+
 function generateGraphData(): string {
     $hash = $_GET['path'];
     $period = $_GET['period'] ?? '1hour';
