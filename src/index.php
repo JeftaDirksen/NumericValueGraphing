@@ -133,11 +133,16 @@ function generateGraphData(): string {
     $hash = $_GET['path'];
     $period = $_GET['period'] ?? '1hour';
 
-    //Get datasets from URL or default to all datasets for this hash
-    $datasets = isset($_GET['datasets']) ? dsStringToArray($_GET['datasets']) : dsStringToArray(implode(',', getDatasets($hash)));
+    // Get datasets from URL
+    $datasets = empty($_GET['datasets']) ? [] : dsStringToArray($_GET['datasets']);
 
-    // Put variables in URL if not present
-    if (!isset($_GET['period']) || !isset($_GET['datasets'])) {
+    // If no datasets specified or parse resulted in empty, get all datasets for this hash
+    if (empty($datasets)) {
+        $datasets = dsStringToArray(implode(',', getDatasets($hash)));
+    }
+
+    // Redirect to add missing parameters
+    if (!isset($_GET['period']) || !isset($_GET['datasets']) || (empty($_GET['datasets']) && !empty($datasets))) {
         redirect($hash . '?period=' . $period . '&datasets=' . dsArrayToString($datasets));
     }
 

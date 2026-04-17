@@ -4,6 +4,7 @@
 
 <head>
     <title>Numeric Value Graphing</title>
+    <link rel="icon" href="favicon.ico" type="image/x-icon">
     <style>
         body {
             font-family: Verdana, Geneva, Tahoma, sans-serif;
