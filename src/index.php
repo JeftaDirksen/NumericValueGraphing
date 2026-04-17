@@ -17,7 +17,7 @@ if (METHOD === 'GET' && HTML) {
 
     // Graph request
     if (isset($_GET['path'])) {
-        $data['title'] = 'Numeric Value Graph - ' . str_replace(',', ' ', getDatasets($_GET['path']));
+        $data['title'] = 'Numeric Value Graph - ' . implode(' ', getDatasets($_GET['path']));
         $data['chartDataJson'] = generateGraphData();
         response_file('graph.php', $data);
     }
@@ -132,7 +132,7 @@ function dsArrayToString(array $dsArray): string {
 function generateGraphData(): string {
     $hash = $_GET['path'];
     $period = $_GET['period'] ?? '1hour';
-    $datasets = $_GET['datasets'] ?? getDatasets($hash);
+    $datasets = dsStringToArray($_GET['datasets']) ?? dsStringToArray(implode(',', getDatasets($hash)));
 
     // Put variables in URL if not present
     if (!isset($_GET['period']) || !isset($_GET['datasets'])) {
@@ -153,8 +153,8 @@ function generateGraphData(): string {
 
     // Iterate datasets and get data for each
     $data = [];
-    foreach (explode(',', $datasets) as $dataset) {
-        $data[$dataset] = loadData($hash, $dataset, $aggregationLevel, time() - $periodInMinutes * 60);
+    foreach ($datasets as $dataset) {
+        $data[$dataset['name']] = loadData($hash, $dataset['name'], $aggregationLevel, time() - $periodInMinutes * 60);
     }
 
     // No data to show
@@ -474,7 +474,7 @@ function htmlUrl($url): string {
     return '<a href="' . $url . '" target="_blank">' . $url . '</a>';
 }
 
-function getDatasets($hash): string {
+function getDatasets($hash): array {
     // Iterate files in DATA_DIR and find the datasets for the given hash
     $datasets = [];
     foreach (glob(DATA_DIR . $hash . '_*_samples.json') as $file) {
@@ -482,5 +482,5 @@ function getDatasets($hash): string {
         $parts = explode('_', $filename);
         $datasets[] = $parts[1];
     }
-    return implode(',', $datasets);
+    return $datasets;
 }
