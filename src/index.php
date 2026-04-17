@@ -110,7 +110,7 @@ function dsStringToArray(string $dsString): array {
     $dsArray = [];
 
     // Split the string by commas, trim whitespace, and filter out empty entries
-    $dsStrings = array_filter(array_map('trim', explode(',', $dsString)), fn ($ds) => $ds !== '');
+    $dsStrings = array_filter(array_map('trim', explode(',', $dsString)), fn($ds) => $ds !== '');
 
     foreach ($dsStrings as $ds) {
         // Split each dataset string into name and type, defaulting to 'avg' if type is not provided
@@ -123,7 +123,7 @@ function dsStringToArray(string $dsString): array {
 
 function dsArrayToString(array $dsArray): string {
     $dsStrings = array_map(
-        fn ($ds) => $ds['name'] . ':' . ($ds['type'] ?? 'avg'),
+        fn($ds) => $ds['name'] . ':' . ($ds['type'] ?? 'avg'),
         $dsArray
     );
     return implode(',', $dsStrings);
@@ -132,11 +132,13 @@ function dsArrayToString(array $dsArray): string {
 function generateGraphData(): string {
     $hash = $_GET['path'];
     $period = $_GET['period'] ?? '1hour';
-    $datasets = dsStringToArray($_GET['datasets']) ?? dsStringToArray(implode(',', getDatasets($hash)));
+
+    //Get datasets from URL or default to all datasets for this hash
+    $datasets = isset($_GET['datasets']) ? dsStringToArray($_GET['datasets']) : dsStringToArray(implode(',', getDatasets($hash)));
 
     // Put variables in URL if not present
     if (!isset($_GET['period']) || !isset($_GET['datasets'])) {
-        redirect($hash . '?period=' . $period . '&datasets=' . $datasets);
+        redirect($hash . '?period=' . $period . '&datasets=' . dsArrayToString($datasets));
     }
 
     // Calculate smallest aggregation level that keeps the number of data points under MAX_DATA_POINTS
@@ -154,7 +156,7 @@ function generateGraphData(): string {
     // Iterate datasets and get data for each
     $data = [];
     foreach ($datasets as $dataset) {
-        $data[$dataset['name']] = loadData($hash, $dataset['name'], $aggregationLevel, time() - $periodInMinutes * 60);
+        $data[$dataset['name']] = loadData($hash, $dataset['name'], $aggregationLevel, $dataset['type'], time() - $periodInMinutes * 60);
     }
 
     // No data to show
@@ -377,15 +379,26 @@ function getUrl($hash = ''): string {
     return rtrim(SCHEME . '://' . HOST . '/' . $hash, '/');
 }
 
-function loadData($hash, $dataset, $type, $from = 0): array {
-    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $type . '.json';
+function loadData($hash, $dataset, $aggregationLevel, $aggregationType = 'all', $from = 0): array {
+    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $aggregationLevel . '.json';
     if (!file_exists($file)) return [];
     $data = json_decode(file_get_contents($file), true);
+
+    // If from is specified, filter data to only include entries with timestamp greater than or equal to from
     if ($from > 0) {
         $data = array_filter($data, function ($entry) use ($from) {
             return $entry[0] >= $from;
         });
     }
+
+    // If aggregationType is specified, filter data accordingly (e.g., if aggregationType is 'max', return only the max values)
+    if ($aggregationType !== 'all') {
+        $typeIndex = ['avg' => 1, 'min' => 2, 'max' => 3, 'last' => 4][$aggregationType] ?? 1;
+        $data = array_map(function ($entry) use ($typeIndex) {
+            return [$entry[0], $entry[$typeIndex]];
+        }, $data);
+    }
+
     return $data;
 }
 
