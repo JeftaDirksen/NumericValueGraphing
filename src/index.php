@@ -9,6 +9,7 @@ define('HTML', str_contains($_SERVER['HTTP_ACCEPT'], 'text/html'));
 define('DATA_DIR', '/data/');
 define('SECRET_PATTERN', '/^[A-Za-z0-9_-]{5,50}$/');
 define('DATASET_PATTERN', '/^[a-z0-9-]{1,15}$/');
+define('HASH_PATTERN', '/^[0-9a-f]{16}$/');
 define('AGGREGATION_LEVELS', ['minutes', 'quarters', 'hours', 'days', 'weeks', 'months', 'years']);
 define('MAX_DATA_POINTS', 250);
 
@@ -20,8 +21,29 @@ if (METHOD === 'GET' && HTML) {
 
     // Graph request
     if (isset($_GET['path'])) {
-        $data['title'] = 'Numeric Value Graph - ' . implode(' ', getDatasets($_GET['path']));
-        $data['chartDataJson'] = generateGraphData();
+        // Check hash
+        $hash = validateHash($_GET['path']);
+        if (!hashExists($hash)) response('No graphs found', 'text/plain', 404);
+
+        // Check datasets
+        if (!empty($_GET['datasets'])) {
+            $datasets = dsStringToArray($_GET['datasets']);
+        } else {
+            $datasets = getDatasets($hash);
+        }
+        if (empty($datasets)) response('No graphs found', 'text/plain', 404);
+
+        // Check period
+        $period = validatePeriod($_GET['period'] ?? '1hour');
+
+        // Rewrite URL if parameters are missing to make it shareable with all necessary parameters
+        if (!isset($_GET['period']) || !isset($_GET['datasets']) || (empty($_GET['datasets']) && !empty($datasets))) {
+            redirect($hash . '?period=' . $period . '&datasets=' . dsArrayToString($datasets));
+        }
+
+        // Generate graph data and show graph
+        $data['title'] = 'Numeric Value Graph - ' . implode(' ', array_column($datasets, 'name'));
+        $data['chartDataJson'] = generateGraphData($hash, $period, $datasets);
         response_file('graph.php', $data);
     }
 
@@ -36,7 +58,7 @@ if (METHOD === 'GET' && !HTML) {
 
     // Datasets request
     if (isset($_GET['path'])) {
-        $hash = $_GET['path'];
+        $hash = validateHash($_GET['path']);
         $datasets = getDatasets($hash);
         $response = ['datasets' => $datasets];
         response(json_encode($response, JSON_PRETTY_PRINT), 'application/json');
@@ -94,6 +116,28 @@ if (METHOD === 'POST') {
 
 response('Method not allowed', 'text/plain', 405);
 
+// Subroutines
+function aggregateData(string $hash, string $dataset): void {
+    aggregateSamples($hash, $dataset);
+
+    aggregateLevel("minutes", "quarters", $hash, $dataset);
+    aggregateLevel("quarters", "hours", $hash, $dataset);
+    aggregateLevel("hours", "days", $hash, $dataset);
+    aggregateLevel("days", "weeks", $hash, $dataset);
+    aggregateLevel("days", "months", $hash, $dataset);
+    aggregateLevel("months", "years", $hash, $dataset);
+
+    cleanupData($hash, $dataset);
+}
+
+function cleanupData(string $hash, string $dataset): void {
+    foreach (AGGREGATION_LEVELS as $aggLevel) {
+        $data = loadData($hash, $dataset, $aggLevel);
+        if ($data === []) continue;
+        saveData($hash, $dataset, $aggLevel, array_slice($data, -MAX_DATA_POINTS));
+    }
+}
+
 function response(string $data = '', string $contenttype = 'text/html', int $status = 200): void {
     // End data with newline if not already present for better readability in terminal when using curl command
     if (substr($data, -1) !== "\n") $data .= "\n";
@@ -109,6 +153,108 @@ function response_file(string $filename, array $data = []): void {
     response($content);
 }
 
+// Validation functions
+function validateHash(string $hash): string {
+    $hash = strtolower(trim($hash));
+    if (!preg_match(HASH_PATTERN, $hash)) {
+        response('Invalid path', 'text/plain', 404);
+    }
+    return $hash;
+}
+
+function validateAggregationType(string $type): string {
+    $type = strtolower(trim($type));
+    if (!in_array($type, ['avg', 'min', 'max', 'last'], true)) {
+        response('Invalid aggregation type', 'text/plain', 400);
+    }
+    return $type;
+}
+
+function validatePeriod(string $period): string {
+    $period = strtolower(trim($period));
+    $number = 1;
+    $unit = 'hour';
+
+    if (preg_match('/^(\d+)\s*(\w+)$/', $period, $matches)) {
+        $number = (int)$matches[1];
+        $unit = $matches[2];
+    } elseif (preg_match('/^(\d+)$/', $period, $matches)) {
+        $number = (int)$matches[1];
+    } elseif (preg_match('/^(\w+)$/', $period, $matches)) {
+        $unit = $matches[1];
+    }
+
+    $unitMap = [
+        'mi' => 'minute',
+        'min' => 'minute',
+        'minute' => 'minute',
+        'minutes' => 'minute',
+        'h' => 'hour',
+        'hour' => 'hour',
+        'hours' => 'hour',
+        'd' => 'day',
+        'day' => 'day',
+        'days' => 'day',
+        'w' => 'week',
+        'week' => 'week',
+        'weeks' => 'week',
+        'mo' => 'month',
+        'month' => 'month',
+        'months' => 'month',
+        'y' => 'year',
+        'year' => 'year',
+        'years' => 'year',
+    ];
+
+    if (!isset($unitMap[$unit])) {
+        response('Invalid period unit', 'text/plain', 400);
+    }
+
+    $fullUnit = $unitMap[$unit];
+    if ($number > 1) {
+        $fullUnit .= 's';
+    }
+
+    return $number . $fullUnit;
+}
+
+function validateSecret(string $secret): string {
+    global $config;
+    if (empty($secret)) {
+        response('Secret is required', 'text/plain', 400);
+    }
+    if (!preg_match(SECRET_PATTERN, $secret)) {
+        response('Secret must be between 5 and 50 characters long and can only contain letters, numbers, underscores and dashes', 'text/plain', 400);
+    }
+    return substr(hash('sha256', $secret . $config['salt']), 0, 16);
+}
+
+function validateDataset(string $dataset): string {
+    if (!preg_match(DATASET_PATTERN, $dataset)) {
+        response('Dataset names must be between 1 and 15 characters long and can only contain lowercase letters, numbers and dashes', 'text/plain', 400);
+    }
+    return $dataset;
+}
+
+function validateNumber(string $number): float {
+    if (!is_numeric($number)) {
+        response("Not a valid number ($number)", 'text/plain', 400);
+    }
+    if (strlen($number) > 10) {
+        response('Number must be less than 10 characters long', 'text/plain', 400);
+    }
+    return (float)$number;
+}
+
+// Helper functions
+function hashExists(string $hash): bool {
+    $hash = validateHash($hash);
+    foreach (glob(DATA_DIR . $hash . '_*_samples.json') as $file) {
+        if (file_exists($file)) return true;
+    }
+    return false;
+}
+
 function dsStringToArray(string $dsString): array {
     $dsArray = [];
 
@@ -118,6 +264,8 @@ function dsStringToArray(string $dsString): array {
     foreach ($dsStrings as $ds) {
         // Split each dataset string into name and type, defaulting to 'avg' if type is not provided
         [$name, $type] = array_pad(explode(':', $ds, 2), 2, 'avg');
+        $name = validateDataset(trim($name));
+        $type = validateAggregationType($type ?: 'avg');
         $dsArray[] = ['name' => $name, 'type' => $type];
     }
 
@@ -132,12 +280,17 @@ function dsArrayToString(array $dsArray): string {
     return implode(',', $dsStrings);
 }
 
-function generateGraphData(): string {
-    $hash = $_GET['path'];
-    $period = $_GET['period'] ?? '1hour';
+function htmlUrl(string $url): string {
+    if (!filter_var($url, FILTER_VALIDATE_URL)) response('Invalid URL', 'text/plain', 400);
+    return '<a href="' . $url . '" target="_blank">' . $url . '</a>';
+}
 
+// Functions to sort
+function generateGraphData(string $hash, string $period = '1hour', array $datasets = []): string {
     // Get datasets from URL
-    $datasets = empty($_GET['datasets']) ? [] : dsStringToArray($_GET['datasets']);
+    if (empty($datasets)) {
+        $datasets = empty($_GET['datasets']) ? [] : dsStringToArray($_GET['datasets']);
+    }
 
     // If no datasets specified or parse resulted in empty, get all datasets for this hash
     if (empty($datasets)) {
@@ -176,7 +329,7 @@ function generateGraphData(): string {
     else {
         $chartDataJson = "[[{type: 'datetime', label: 'Time'}";
         foreach ($data as $dataset => $entries) {
-            $chartDataJson .= ", {type: 'number', label: '$dataset'}";
+            $chartDataJson .= ", {type: 'number', label: " . json_encode($dataset, JSON_UNESCAPED_UNICODE) . "}";
         }
         $chartDataJson .= "]";
 
@@ -208,27 +361,6 @@ function generateGraphData(): string {
     }
 
     return $chartDataJson;
-}
-
-function aggregateData(string $hash, string $dataset): void {
-    aggregateSamples($hash, $dataset);
-
-    aggregateLevel("minutes", "quarters", $hash, $dataset);
-    aggregateLevel("quarters", "hours", $hash, $dataset);
-    aggregateLevel("hours", "days", $hash, $dataset);
-    aggregateLevel("days", "weeks", $hash, $dataset);
-    aggregateLevel("days", "months", $hash, $dataset);
-    aggregateLevel("months", "years", $hash, $dataset);
-
-    cleanupData($hash, $dataset);
-}
-
-function cleanupData(string $hash, string $dataset): void {
-    foreach (AGGREGATION_LEVELS as $aggLevel) {
-        $data = loadData($hash, $dataset, $aggLevel);
-        if ($data === []) continue;
-        saveData($hash, $dataset, $aggLevel, array_slice($data, -MAX_DATA_POINTS));
-    }
 }
 
 function aggregateSamples(string $hash, string $dataset): void {
@@ -346,17 +478,6 @@ function redirect(string $url): void {
     exit('Redirecting to ' . $url);
 }
 
-function validateSecret(string $secret): string {
-    global $config;
-    if (empty($secret)) {
-        response('Secret is required', 'text/plain', 400);
-    }
-    if (!preg_match(SECRET_PATTERN, $secret)) {
-        response('Secret must be between 5 and 50 characters long and can only contain letters, numbers, underscores and dashes', 'text/plain', 400);
-    }
-    return substr(hash('sha256', $secret . $config['salt']), 0, 16);
-}
-
 function getConfig(): array {
     $configFile = DATA_DIR . 'config.json';
     if (!file_exists($configFile)) {
@@ -375,23 +496,6 @@ function getMeta(): array {
 function saveMeta(array $meta): void {
     $metaFile = DATA_DIR . 'meta.json';
     file_put_contents($metaFile, json_encode($meta, JSON_PRETTY_PRINT), LOCK_EX);
-}
-
-function validateDataset(string $dataset): string {
-    if (!preg_match(DATASET_PATTERN, $dataset)) {
-        response('Dataset names must be between 1 and 15 characters long and can only contain lowercase letters, numbers and dashes', 'text/plain', 400);
-    }
-    return $dataset;
-}
-
-function validateNumber(string $number): float {
-    if (!is_numeric($number)) {
-        response("Not a valid number ($number)", 'text/plain', 400);
-    }
-    if (strlen($number) > 10) {
-        response('Number must be less than 10 characters long', 'text/plain', 400);
-    }
-    return (float)$number;
 }
 
 function getUrl(string $hash = ''): string {
@@ -502,11 +606,8 @@ function getPeriodInMinutes(string $period): int {
     }
 }
 
-function htmlUrl(string $url): string {
-    return '<a href="' . $url . '" target="_blank">' . $url . '</a>';
-}
-
 function getDatasets(string $hash): array {
+    $hash = validateHash($hash);
     // Iterate files in DATA_DIR and find the datasets for the given hash
     $datasets = [];
     foreach (glob(DATA_DIR . $hash . '_*_samples.json') as $file) {
@@ -514,5 +615,5 @@ function getDatasets(string $hash): array {
         $parts = explode('_', $filename);
         $datasets[] = $parts[1];
     }
-    return $datasets;
+    return array_values(array_unique($datasets));
 }

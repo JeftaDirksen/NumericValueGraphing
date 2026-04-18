@@ -1,4 +1,7 @@
-<?php if (basename($_SERVER['SCRIPT_NAME']) == basename(__FILE__)) { http_response_code(403); exit('403 Forbidden'); } ?>
+<?php if (!defined('DATA_DIR')) {
+    http_response_code(403);
+    exit('403 Forbidden');
+} ?>
 <!doctype html>
 <html>
 
