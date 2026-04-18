@@ -12,6 +12,9 @@ define('DATASET_PATTERN', '/^[a-z0-9-]{1,15}$/');
 define('AGGREGATION_LEVELS', ['minutes', 'quarters', 'hours', 'days', 'weeks', 'months', 'years']);
 define('MAX_DATA_POINTS', 250);
 
+$config = getConfig();
+$meta = getMeta();
+
 // Browser request
 if (METHOD === 'GET' && HTML) {
 
@@ -91,7 +94,7 @@ if (METHOD === 'POST') {
 
 response('Method not allowed', 'text/plain', 405);
 
-function response($data = '', $contenttype = 'text/html', $status = 200): void {
+function response(string $data = '', string $contenttype = 'text/html', int $status = 200): void {
     // End data with newline if not already present for better readability in terminal when using curl command
     if (substr($data, -1) !== "\n") $data .= "\n";
     http_response_code($status);
@@ -99,7 +102,7 @@ function response($data = '', $contenttype = 'text/html', $status = 200): void {
     exit($data);
 }
 
-function response_file($filename, $data = []): void {
+function response_file(string $filename, array $data = []): void {
     ob_start();
     include $filename;
     $content = ob_get_clean();
@@ -207,7 +210,7 @@ function generateGraphData(): string {
     return $chartDataJson;
 }
 
-function aggregateData($hash, $dataset): void {
+function aggregateData(string $hash, string $dataset): void {
     aggregateSamples($hash, $dataset);
 
     aggregateLevel("minutes", "quarters", $hash, $dataset);
@@ -220,7 +223,7 @@ function aggregateData($hash, $dataset): void {
     cleanupData($hash, $dataset);
 }
 
-function cleanupData($hash, $dataset): void {
+function cleanupData(string $hash, string $dataset): void {
     foreach (AGGREGATION_LEVELS as $aggLevel) {
         $data = loadData($hash, $dataset, $aggLevel);
         if ($data === []) continue;
@@ -228,7 +231,7 @@ function cleanupData($hash, $dataset): void {
     }
 }
 
-function aggregateSamples($hash, $dataset): void {
+function aggregateSamples(string $hash, string $dataset): void {
     $cur_minute = getPeriodTimestamp(time(), 'minutes');
     $samples = loadData($hash, $dataset, 'samples');
     if ($samples === []) return;  // No samples to aggregate
@@ -315,7 +318,7 @@ function aggregateLevel(string $fromLevel, string $toLevel, string $hash, string
     saveData($hash, $dataset, $toLevel, $toData);
 }
 
-function generateTestData($hash): void {
+function generateTestData(string $hash): void {
     $datasets = ['testdata1', 'testdata2', 'testdata3'];
     $now = time();
     $twoYearsAgo = $now - (2 * 365 * 24 * 60 * 60);
@@ -335,7 +338,7 @@ function generateTestData($hash): void {
     redirect('?graphurl=' . getUrl($hash) . '&secret=testing&name1=testdata');
 }
 
-function redirect($url): void {
+function redirect(string $url): void {
     if (!str_starts_with($url, 'http')) {
         $url = SCHEME . '://' . HOST . '/' . ltrim($url, '/');
     }
@@ -344,7 +347,7 @@ function redirect($url): void {
 }
 
 function validateSecret(string $secret): string {
-    $config = getConfig();
+    global $config;
     if (empty($secret)) {
         response('Secret is required', 'text/plain', 400);
     }
@@ -363,14 +366,25 @@ function getConfig(): array {
     return json_decode(file_get_contents($configFile), true);
 }
 
-function validateDataset($dataset): string {
+function getMeta(): array {
+    $metaFile = DATA_DIR . 'meta.json';
+    if (!file_exists($metaFile)) return [];
+    return json_decode(file_get_contents($metaFile), true);
+}
+
+function saveMeta(array $meta): void {
+    $metaFile = DATA_DIR . 'meta.json';
+    file_put_contents($metaFile, json_encode($meta, JSON_PRETTY_PRINT), LOCK_EX);
+}
+
+function validateDataset(string $dataset): string {
     if (!preg_match(DATASET_PATTERN, $dataset)) {
         response('Dataset names must be between 1 and 15 characters long and can only contain lowercase letters, numbers and dashes', 'text/plain', 400);
     }
     return $dataset;
 }
 
-function validateNumber($number): float {
+function validateNumber(string $number): float {
     if (!is_numeric($number)) {
         response("Not a valid number ($number)", 'text/plain', 400);
     }
@@ -380,11 +394,11 @@ function validateNumber($number): float {
     return (float)$number;
 }
 
-function getUrl($hash = ''): string {
+function getUrl(string $hash = ''): string {
     return rtrim(SCHEME . '://' . HOST . '/' . $hash, '/');
 }
 
-function loadData($hash, $dataset, $aggregationLevel, $aggregationType = 'all', $from = 0): array {
+function loadData(string $hash, string $dataset, string $aggregationLevel, string $aggregationType = 'all', int $from = 0): array {
     $file = DATA_DIR . $hash . '_' . $dataset . '_' . $aggregationLevel . '.json';
     if (!file_exists($file)) return [];
     $data = json_decode(file_get_contents($file), true);
@@ -407,18 +421,18 @@ function loadData($hash, $dataset, $aggregationLevel, $aggregationType = 'all', 
     return $data;
 }
 
-function saveData($hash, $dataset, $type, $data): void {
+function saveData(string $hash, string $dataset, string $type, array $data): void {
     $file = DATA_DIR . $hash . '_' . $dataset . '_' . $type . '.json';
     file_put_contents($file, json_encode($data), LOCK_EX);
 }
 
-function appendData($hash, $dataset, $type, $entry): void {
+function appendData(string $hash, string $dataset, string $type, array $entry): void {
     $data = loadData($hash, $dataset, $type);
     $data[] = $entry;
     saveData($hash, $dataset, $type, $data);
 }
 
-function getPeriodTimestamp($timestamp, $period): int {
+function getPeriodTimestamp(int $timestamp, string $period): int {
     switch ($period) {
         case 'minutes':
             return floor($timestamp / 60) * 60;
@@ -451,7 +465,7 @@ function getPeriodTimestamp($timestamp, $period): int {
     }
 }
 
-function getPeriodInMinutes($period): int {
+function getPeriodInMinutes(string $period): int {
     // Split period into number and unit.
     // If the regex does not match, defaults to 1 hour (60 minutes).
     // If no number is specified, defaults to 1; if no unit is specified, defaults to hours.
@@ -488,11 +502,11 @@ function getPeriodInMinutes($period): int {
     }
 }
 
-function htmlUrl($url): string {
+function htmlUrl(string $url): string {
     return '<a href="' . $url . '" target="_blank">' . $url . '</a>';
 }
 
-function getDatasets($hash): array {
+function getDatasets(string $hash): array {
     // Iterate files in DATA_DIR and find the datasets for the given hash
     $datasets = [];
     foreach (glob(DATA_DIR . $hash . '_*_samples.json') as $file) {
