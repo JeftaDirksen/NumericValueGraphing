@@ -13,9 +13,11 @@ define('DATASET_PATTERN', '/^[a-z0-9-]{1,15}$/');
 define('HASH_PATTERN', '/^[0-9a-f]{16}$/');
 define('AGGREGATION_LEVELS', ['minutes', 'quarters', 'hours', 'days', 'weeks', 'months', 'years']);
 define('MAX_DATA_POINTS', 250);
+define('CURRENT_TIMESTAMP', time());
+define('CURRENT_FORMATTED_DATETIME', (new DateTime())->format(DateTime::ATOM));
 
 $config = getConfig();
-$meta = getMeta();
+$meta = null; // Will be loaded when needed to avoid unnecessary file read operations
 
 // Browser request
 if (METHOD === 'GET' && HTML) {
@@ -86,7 +88,7 @@ if (METHOD === 'POST') {
     // Store data
     $secret = $_POST['secret'] ?? '';
     $hash = validateSecret($secret);
-    $time = time();
+    $time = CURRENT_TIMESTAMP;
     $fields = [];
     foreach ($_POST as $key => $value) {
         if ($key === 'secret') continue; // Skip secret field
@@ -155,7 +157,7 @@ function response_file(string $filename, array $data = []): void {
 }
 
 function aggregateSamples(string $hash, string $dataset): void {
-    $cur_minute = getPeriodTimestamp(time(), 'minutes');
+    $cur_minute = getPeriodTimestamp(CURRENT_TIMESTAMP, 'minutes');
     $samples = loadData($hash, $dataset, 'samples');
     if ($samples === []) return;  // No samples to aggregate
 
@@ -212,7 +214,7 @@ function aggregateLevel(string $fromLevel, string $toLevel, string $hash, string
     $toData = loadData($hash, $dataset, $toLevel);
 
     $lastToDataPeriod = $toData !== [] ? $toData[array_key_last($toData)][0] : 0;
-    $currentToPeriod = getPeriodTimestamp(time(), $toLevel);
+    $currentToPeriod = getPeriodTimestamp(CURRENT_TIMESTAMP, $toLevel);
     $periodData = [];
 
     foreach ($fromData as [$timestamp, $avg, $min, $max, $last]) {
@@ -403,6 +405,7 @@ function loadData(string $hash, string $dataset, string $aggregationLevel, strin
 function saveData(string $hash, string $dataset, string $type, array $data): void {
     $file = DATA_DIR . $hash . '_' . $dataset . '_' . $type . '.json';
     file_put_contents($file, json_encode($data), LOCK_EX);
+    updateMeta('lastModified', $hash, $dataset);
 }
 
 function appendData(string $hash, string $dataset, string $type, array $entry): void {
@@ -451,9 +454,11 @@ function generateGraphData(string $hash, string $period = '1hour', array $datase
     }
 
     // Iterate datasets and get data for each
+    updateMeta('lastAccessed', $hash);
     $data = [];
     foreach ($datasets as $dataset) {
-        $data[$dataset['name']] = loadData($hash, $dataset['name'], $aggregationLevel, $dataset['type'], time() - $periodInMinutes * 60);
+        updateMeta('lastAccessed', $hash, $dataset['name']);
+        $data[$dataset['name']] = loadData($hash, $dataset['name'], $aggregationLevel, $dataset['type'], CURRENT_TIMESTAMP - $periodInMinutes * 60);
     }
 
     // No data to show
@@ -501,13 +506,12 @@ function generateGraphData(string $hash, string $period = '1hour', array $datase
 
 function generateTestData(string $hash): void {
     $datasets = ['testdata1', 'testdata2', 'testdata3'];
-    $now = time();
-    $twoYearsAgo = $now - (2 * 365 * 24 * 60 * 60);
+    $twoYearsAgo = CURRENT_TIMESTAMP - (2 * 365 * 24 * 60 * 60);
 
     foreach ($datasets as $dataset) {
         $samples = [];
         $value = 0.0;
-        for ($timestamp = $twoYearsAgo; $timestamp <= $now; $timestamp += 120) {
+        for ($timestamp = $twoYearsAgo; $timestamp <= CURRENT_TIMESTAMP; $timestamp += 120) {
             $samples[] = [$timestamp, $value];
             $value += rand(-1000, 1000) / 1000;
         }
@@ -532,6 +536,16 @@ function getMeta(): array {
     $metaFile = DATA_DIR . 'meta.json';
     if (!file_exists($metaFile)) return [];
     return json_decode(file_get_contents($metaFile), true);
+}
+
+function updateMeta(string $key, string $hash, string $datasetName = ''): void {
+    global $meta;
+    if ($meta === null) $meta = getMeta(); // Load meta data if not already loaded
+    $meta[$hash] = array_merge($meta[$hash] ?? ['lastAccessed' => '', 'lastModified' => ''], [$key => CURRENT_FORMATTED_DATETIME]);
+    if (!empty($datasetName)) {
+        $meta[$hash][$datasetName] = array_merge($meta[$hash][$datasetName] ?? ['lastAccessed' => '', 'lastModified' => ''], [$key => CURRENT_FORMATTED_DATETIME]);
+    }
+    saveMeta($meta);
 }
 
 function saveMeta(array $meta): void {
