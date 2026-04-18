@@ -154,6 +154,101 @@ function response_file(string $filename, array $data = []): void {
     response($content);
 }
 
+function aggregateSamples(string $hash, string $dataset): void {
+    $cur_minute = getPeriodTimestamp(time(), 'minutes');
+    $samples = loadData($hash, $dataset, 'samples');
+    if ($samples === []) return;  // No samples to aggregate
+
+    $first_minute = getPeriodTimestamp($samples[0][0], 'minutes');
+    if ($first_minute >= $cur_minute) return;  // No samples to aggregate yet
+
+    $minutes = loadData($hash, $dataset, 'minutes');
+    $aggregated = [];
+    $bucket = ['sum' => 0, 'count' => 0, 'min' => null, 'max' => null, 'last' => null];
+    $minute = $first_minute;
+
+    foreach ($samples as $index => [$timestamp, $value]) {
+        $sample_minute = getPeriodTimestamp($timestamp, 'minutes');
+        if ($sample_minute >= $cur_minute) {
+            $remainingSamples = array_slice($samples, $index);
+            break;
+        }
+
+        if ($sample_minute !== $minute) {
+            if ($bucket['count'] > 0) {
+                $aggregated[] = [$minute, $bucket['sum'] / $bucket['count'], $bucket['min'], $bucket['max'], $bucket['last']];
+            }
+            $minute = $sample_minute;
+            $bucket = ['sum' => 0, 'count' => 0, 'min' => null, 'max' => null, 'last' => null];
+        }
+
+        $bucket['sum'] += $value;
+        $bucket['count']++;
+        $bucket['min'] = $bucket['min'] === null || $value < $bucket['min'] ? $value : $bucket['min'];
+        $bucket['max'] = $bucket['max'] === null || $value > $bucket['max'] ? $value : $bucket['max'];
+        $bucket['last'] = $value;
+    }
+
+    if (!isset($remainingSamples)) {
+        $remainingSamples = [];
+    }
+
+    if ($bucket['count'] > 0 && $minute < $cur_minute) {
+        $aggregated[] = [$minute, $bucket['sum'] / $bucket['count'], $bucket['min'], $bucket['max'], $bucket['last']];
+    }
+
+    if ($aggregated !== []) {
+        $minutes = array_merge($minutes, $aggregated);
+        saveData($hash, $dataset, 'minutes', $minutes);
+    }
+
+    saveData($hash, $dataset, 'samples', $remainingSamples);
+}
+
+function aggregateLevel(string $fromLevel, string $toLevel, string $hash, string $dataset): void {
+    // Load data
+    $fromData = loadData($hash, $dataset, $fromLevel);
+    if ($fromData === []) return;
+    $toData = loadData($hash, $dataset, $toLevel);
+
+    $lastToDataPeriod = $toData !== [] ? $toData[array_key_last($toData)][0] : 0;
+    $currentToPeriod = getPeriodTimestamp(time(), $toLevel);
+    $periodData = [];
+
+    foreach ($fromData as [$timestamp, $avg, $min, $max, $last]) {
+        $thisToPeriod = getPeriodTimestamp($timestamp, $toLevel);
+        if ($thisToPeriod <= $lastToDataPeriod) continue;  // Skip if we already have data for this period
+        if ($thisToPeriod >= $currentToPeriod) break;      // Stop if we've reached the current period
+
+        $bucket = &$periodData[$thisToPeriod];
+        if (!isset($bucket)) {
+            $bucket = ['sum' => 0, 'count' => 0, 'min' => $min, 'max' => $max, 'last' => $last];
+        }
+        $bucket['sum'] += $avg;
+        $bucket['count']++;
+        $bucket['min'] = $min < $bucket['min'] ? $min : $bucket['min'];
+        $bucket['max'] = $max > $bucket['max'] ? $max : $bucket['max'];
+        $bucket['last'] = $last;
+        unset($bucket);
+    }
+
+    if ($periodData === []) return;  // No new data to aggregate
+
+    // Convert and save aggregated data
+    foreach ($periodData as $period => $data) {
+        $toData[] = [$period, $data['sum'] / $data['count'], $data['min'], $data['max'], $data['last']];
+    }
+    saveData($hash, $dataset, $toLevel, $toData);
+}
+
+function redirect(string $url): void {
+    if (!str_starts_with($url, 'http')) {
+        $url = SCHEME . '://' . HOST . '/' . ltrim($url, '/');
+    }
+    header('Location: ' . $url);
+    exit('Redirecting to ' . $url);
+}
+
 // Validation functions
 function validateHash(string $hash): string {
     $hash = strtolower(trim($hash));
@@ -247,7 +342,6 @@ function validateNumber(string $number): float {
     return (float)$number;
 }
 
-// Helper functions
 function hashExists(string $hash): bool {
     $hash = validateHash($hash);
     foreach (glob(DATA_DIR . $hash . '_*_samples.json') as $file) {
@@ -256,6 +350,7 @@ function hashExists(string $hash): bool {
     return false;
 }
 
+// Conversion functions
 function dsStringToArray(string $dsString): array {
     $dsArray = [];
 
@@ -281,9 +376,39 @@ function dsArrayToString(array $dsArray): string {
     return implode(',', $dsStrings);
 }
 
-function htmlUrl(string $url): string {
-    if (!filter_var($url, FILTER_VALIDATE_URL)) response('Invalid URL', 'text/plain', 400);
-    return '<a href="' . $url . '" target="_blank">' . $url . '</a>';
+// Data functions
+function loadData(string $hash, string $dataset, string $aggregationLevel, string $aggregationType = 'all', int $from = 0): array {
+    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $aggregationLevel . '.json';
+    if (!file_exists($file)) return [];
+    $data = json_decode(file_get_contents($file), true);
+
+    // If from is specified, filter data to only include entries with timestamp greater than or equal to from
+    if ($from > 0) {
+        $data = array_filter($data, function ($entry) use ($from) {
+            return $entry[0] >= $from;
+        });
+    }
+
+    // If aggregationType is specified, filter data accordingly (e.g., if aggregationType is 'max', return only the max values)
+    if ($aggregationType !== 'all') {
+        $typeIndex = ['avg' => 1, 'min' => 2, 'max' => 3, 'last' => 4][$aggregationType] ?? 1;
+        $data = array_map(function ($entry) use ($typeIndex) {
+            return [$entry[0], $entry[$typeIndex]];
+        }, $data);
+    }
+
+    return $data;
+}
+
+function saveData(string $hash, string $dataset, string $type, array $data): void {
+    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $type . '.json';
+    file_put_contents($file, json_encode($data), LOCK_EX);
+}
+
+function appendData(string $hash, string $dataset, string $type, array $entry): void {
+    $data = loadData($hash, $dataset, $type);
+    $data[] = $entry;
+    saveData($hash, $dataset, $type, $data);
 }
 
 function getDatasets(string $hash): array {
@@ -297,7 +422,6 @@ function getDatasets(string $hash): array {
     return dsStringToArray(implode(',', $datasets));
 }
 
-// Functions to sort
 function generateGraphData(string $hash, string $period = '1hour', array $datasets = []): string {
     // Get datasets from URL
     if (empty($datasets)) {
@@ -375,93 +499,6 @@ function generateGraphData(string $hash, string $period = '1hour', array $datase
     return $chartDataJson;
 }
 
-function aggregateSamples(string $hash, string $dataset): void {
-    $cur_minute = getPeriodTimestamp(time(), 'minutes');
-    $samples = loadData($hash, $dataset, 'samples');
-    if ($samples === []) return;  // No samples to aggregate
-
-    $first_minute = getPeriodTimestamp($samples[0][0], 'minutes');
-    if ($first_minute >= $cur_minute) return;  // No samples to aggregate yet
-
-    $minutes = loadData($hash, $dataset, 'minutes');
-    $aggregated = [];
-    $bucket = ['sum' => 0, 'count' => 0, 'min' => null, 'max' => null, 'last' => null];
-    $minute = $first_minute;
-
-    foreach ($samples as $index => [$timestamp, $value]) {
-        $sample_minute = getPeriodTimestamp($timestamp, 'minutes');
-        if ($sample_minute >= $cur_minute) {
-            $remainingSamples = array_slice($samples, $index);
-            break;
-        }
-
-        if ($sample_minute !== $minute) {
-            if ($bucket['count'] > 0) {
-                $aggregated[] = [$minute, $bucket['sum'] / $bucket['count'], $bucket['min'], $bucket['max'], $bucket['last']];
-            }
-            $minute = $sample_minute;
-            $bucket = ['sum' => 0, 'count' => 0, 'min' => null, 'max' => null, 'last' => null];
-        }
-
-        $bucket['sum'] += $value;
-        $bucket['count']++;
-        $bucket['min'] = $bucket['min'] === null || $value < $bucket['min'] ? $value : $bucket['min'];
-        $bucket['max'] = $bucket['max'] === null || $value > $bucket['max'] ? $value : $bucket['max'];
-        $bucket['last'] = $value;
-    }
-
-    if (!isset($remainingSamples)) {
-        $remainingSamples = [];
-    }
-
-    if ($bucket['count'] > 0 && $minute < $cur_minute) {
-        $aggregated[] = [$minute, $bucket['sum'] / $bucket['count'], $bucket['min'], $bucket['max'], $bucket['last']];
-    }
-
-    if ($aggregated !== []) {
-        $minutes = array_merge($minutes, $aggregated);
-        saveData($hash, $dataset, 'minutes', $minutes);
-    }
-
-    saveData($hash, $dataset, 'samples', $remainingSamples);
-}
-
-function aggregateLevel(string $fromLevel, string $toLevel, string $hash, string $dataset): void {
-    // Load data
-    $fromData = loadData($hash, $dataset, $fromLevel);
-    if ($fromData === []) return;
-    $toData = loadData($hash, $dataset, $toLevel);
-
-    $lastToDataPeriod = $toData !== [] ? $toData[array_key_last($toData)][0] : 0;
-    $currentToPeriod = getPeriodTimestamp(time(), $toLevel);
-    $periodData = [];
-
-    foreach ($fromData as [$timestamp, $avg, $min, $max, $last]) {
-        $thisToPeriod = getPeriodTimestamp($timestamp, $toLevel);
-        if ($thisToPeriod <= $lastToDataPeriod) continue;  // Skip if we already have data for this period
-        if ($thisToPeriod >= $currentToPeriod) break;      // Stop if we've reached the current period
-
-        $bucket = &$periodData[$thisToPeriod];
-        if (!isset($bucket)) {
-            $bucket = ['sum' => 0, 'count' => 0, 'min' => $min, 'max' => $max, 'last' => $last];
-        }
-        $bucket['sum'] += $avg;
-        $bucket['count']++;
-        $bucket['min'] = $min < $bucket['min'] ? $min : $bucket['min'];
-        $bucket['max'] = $max > $bucket['max'] ? $max : $bucket['max'];
-        $bucket['last'] = $last;
-        unset($bucket);
-    }
-
-    if ($periodData === []) return;  // No new data to aggregate
-
-    // Convert and save aggregated data
-    foreach ($periodData as $period => $data) {
-        $toData[] = [$period, $data['sum'] / $data['count'], $data['min'], $data['max'], $data['last']];
-    }
-    saveData($hash, $dataset, $toLevel, $toData);
-}
-
 function generateTestData(string $hash): void {
     $datasets = ['testdata1', 'testdata2', 'testdata3'];
     $now = time();
@@ -480,14 +517,6 @@ function generateTestData(string $hash): void {
     }
 
     redirect('?graphurl=' . getUrl($hash) . '&secret=testing&name1=testdata');
-}
-
-function redirect(string $url): void {
-    if (!str_starts_with($url, 'http')) {
-        $url = SCHEME . '://' . HOST . '/' . ltrim($url, '/');
-    }
-    header('Location: ' . $url);
-    exit('Redirecting to ' . $url);
 }
 
 function getConfig(): array {
@@ -510,42 +539,14 @@ function saveMeta(array $meta): void {
     file_put_contents($metaFile, json_encode($meta, JSON_PRETTY_PRINT), LOCK_EX);
 }
 
+// Helper functions
 function getUrl(string $hash = ''): string {
     return rtrim(SCHEME . '://' . HOST . '/' . $hash, '/');
 }
 
-function loadData(string $hash, string $dataset, string $aggregationLevel, string $aggregationType = 'all', int $from = 0): array {
-    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $aggregationLevel . '.json';
-    if (!file_exists($file)) return [];
-    $data = json_decode(file_get_contents($file), true);
-
-    // If from is specified, filter data to only include entries with timestamp greater than or equal to from
-    if ($from > 0) {
-        $data = array_filter($data, function ($entry) use ($from) {
-            return $entry[0] >= $from;
-        });
-    }
-
-    // If aggregationType is specified, filter data accordingly (e.g., if aggregationType is 'max', return only the max values)
-    if ($aggregationType !== 'all') {
-        $typeIndex = ['avg' => 1, 'min' => 2, 'max' => 3, 'last' => 4][$aggregationType] ?? 1;
-        $data = array_map(function ($entry) use ($typeIndex) {
-            return [$entry[0], $entry[$typeIndex]];
-        }, $data);
-    }
-
-    return $data;
-}
-
-function saveData(string $hash, string $dataset, string $type, array $data): void {
-    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $type . '.json';
-    file_put_contents($file, json_encode($data), LOCK_EX);
-}
-
-function appendData(string $hash, string $dataset, string $type, array $entry): void {
-    $data = loadData($hash, $dataset, $type);
-    $data[] = $entry;
-    saveData($hash, $dataset, $type, $data);
+function htmlUrl(string $url): string {
+    if (!filter_var($url, FILTER_VALIDATE_URL)) response('Invalid URL', 'text/plain', 400);
+    return '<a href="' . $url . '" target="_blank">' . $url . '</a>';
 }
 
 function getPeriodTimestamp(int $timestamp, string $period): int {
