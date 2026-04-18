@@ -1,6 +1,7 @@
 <?php
 
 // Init
+ini_set('include_path', '..');
 ini_set('memory_limit', '512M');
 define('SCHEME', $_SERVER['HTTP_X_FORWARDED_PROTO'] ?? $_SERVER['REQUEST_SCHEME']);
 define('HOST', $_SERVER['HTTP_HOST']);
@@ -148,7 +149,7 @@ function response(string $data = '', string $contenttype = 'text/html', int $sta
 
 function response_file(string $filename, array $data = []): void {
     ob_start();
-    include $filename;
+    require $filename;
     $content = ob_get_clean();
     response($content);
 }

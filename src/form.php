@@ -1,7 +1,3 @@
-<?php if (!defined('DATA_DIR')) {
-    http_response_code(403);
-    exit('403 Forbidden');
-} ?>
 <!doctype html>
 <html>
 
