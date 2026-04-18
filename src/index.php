@@ -285,6 +285,17 @@ function htmlUrl(string $url): string {
     return '<a href="' . $url . '" target="_blank">' . $url . '</a>';
 }
 
+function getDatasets(string $hash): array {
+    // Iterate files in DATA_DIR and find the datasets for the given hash
+    $datasets = [];
+    foreach (glob(DATA_DIR . $hash . '_*_samples.json') as $file) {
+        $filename = basename($file);
+        $parts = explode('_', $filename);
+        $datasets[] = $parts[1];
+    }
+    return dsStringToArray(implode(',', $datasets));
+}
+
 // Functions to sort
 function generateGraphData(string $hash, string $period = '1hour', array $datasets = []): string {
     // Get datasets from URL
@@ -604,16 +615,4 @@ function getPeriodInMinutes(string $period): int {
         default:
             return 60; // Default to 1 hour if period is not recognized
     }
-}
-
-function getDatasets(string $hash): array {
-    $hash = validateHash($hash);
-    // Iterate files in DATA_DIR and find the datasets for the given hash
-    $datasets = [];
-    foreach (glob(DATA_DIR . $hash . '_*_samples.json') as $file) {
-        $filename = basename($file);
-        $parts = explode('_', $filename);
-        $datasets[] = $parts[1];
-    }
-    return array_values(array_unique($datasets));
 }
