@@ -37,11 +37,11 @@ if (METHOD === 'GET' && HTML) {
         if (empty($datasets)) response('No graphs found', 'text/plain', 404);
 
         // Check period
-        $period = validatePeriod($_GET['period'] ?? '1hour');
+        $period = validatePeriod($_GET['period'] ?? '1', $_GET['period_unit'] ?? 'hours');
 
         // Rewrite URL if parameters are missing to make it shareable with all necessary parameters
-        if (!isset($_GET['period']) || !isset($_GET['datasets']) || (empty($_GET['datasets']) && !empty($datasets))) {
-            redirect($hash . '?period=' . $period . '&datasets=' . dsArrayToString($datasets));
+        if (!isset($_GET['period']) || !isset($_GET['period_unit']) || !isset($_GET['datasets']) || (empty($_GET['datasets']) && !empty($datasets))) {
+            redirect($hash . '?period=' . $period[0] . '&period_unit=' . $period[1] . '&datasets=' . dsArrayToString($datasets));
         }
 
         // Generate graph data and show graph
@@ -268,52 +268,22 @@ function validateAggregationType(string $type): string {
     return $type;
 }
 
-function validatePeriod(string $period): string {
+function validatePeriod(string $period, string $unit): array {
     $period = strtolower(trim($period));
-    $number = 1;
-    $unit = 'hour';
+    $unit = strtolower(trim($unit));
 
-    if (preg_match('/^(\d+)\s*(\w+)$/', $period, $matches)) {
-        $number = (int)$matches[1];
-        $unit = $matches[2];
-    } elseif (preg_match('/^(\d+)$/', $period, $matches)) {
-        $number = (int)$matches[1];
-    } elseif (preg_match('/^(\w+)$/', $period, $matches)) {
-        $unit = $matches[1];
+    // Check if period is a number
+    if (!is_numeric($period)) {
+        response('Period must be a number', 'text/plain', 400);
     }
 
-    $unitMap = [
-        'mi' => 'minute',
-        'min' => 'minute',
-        'minute' => 'minute',
-        'minutes' => 'minute',
-        'h' => 'hour',
-        'hour' => 'hour',
-        'hours' => 'hour',
-        'd' => 'day',
-        'day' => 'day',
-        'days' => 'day',
-        'w' => 'week',
-        'week' => 'week',
-        'weeks' => 'week',
-        'mo' => 'month',
-        'month' => 'month',
-        'months' => 'month',
-        'y' => 'year',
-        'year' => 'year',
-        'years' => 'year',
-    ];
-
-    if (!isset($unitMap[$unit])) {
+    // Check if unit is valid
+    $validUnits = ['minutes', 'quarters', 'hours', 'days', 'weeks', 'months', 'years'];
+    if (!in_array($unit, $validUnits, true)) {
         response('Invalid period unit', 'text/plain', 400);
     }
 
-    $fullUnit = $unitMap[$unit];
-    if ($number > 1) {
-        $fullUnit .= 's';
-    }
-
-    return $number . $fullUnit;
+    return [(int)$period, $unit];
 }
 
 function validateSecret(string $secret): string {
@@ -431,7 +401,7 @@ function getDatasets(string $hash): array {
     return dsStringToArray(implode(',', $datasets));
 }
 
-function generateGraphData(string $hash, string $period = '1hour', array $datasets = []): string {
+function generateGraphData(string $hash, array $period = ['1', 'hours'], array $datasets = []): string {
     // Get datasets from URL
     if (empty($datasets)) {
         $datasets = empty($_GET['datasets']) ? [] : dsStringToArray($_GET['datasets']);
@@ -443,8 +413,8 @@ function generateGraphData(string $hash, string $period = '1hour', array $datase
     }
 
     // Redirect to add missing parameters
-    if (!isset($_GET['period']) || !isset($_GET['datasets']) || (empty($_GET['datasets']) && !empty($datasets))) {
-        redirect($hash . '?period=' . $period . '&datasets=' . dsArrayToString($datasets));
+    if (!isset($_GET['period']) || !isset($_GET['period_unit']) || !isset($_GET['datasets']) || (empty($_GET['datasets']) && !empty($datasets))) {
+        redirect($hash . '?period=' . $period[0] . '&period_unit=' . $period[1] . '&datasets=' . dsArrayToString($datasets));
     }
 
     // Calculate smallest aggregation level that keeps the number of data points under MAX_DATA_POINTS
@@ -608,39 +578,26 @@ function getPeriodTimestamp(int $timestamp, string $period): int {
     }
 }
 
-function getPeriodInMinutes(string $period): int {
-    // Split period into number and unit.
-    // If the regex does not match, defaults to 1 hour (60 minutes).
-    // If no number is specified, defaults to 1; if no unit is specified, defaults to hours.
-    $period = strtolower(trim($period));
-    $number = 1;
-    $unit = 'hours';
-    preg_match('/(\d+)(\w+)/', $period, $matches);
-    if (isset($matches[1]) && isset($matches[2])) {
-        $number = (int)$matches[1];
-        $unit = $matches[2];
-    } elseif (preg_match('/^(\d+)$/', $period, $matches)) {
-        $number = (int)$matches[1];
-    } elseif (preg_match('/^(\w+)$/', $period, $matches)) {
-        $unit = $matches[1];
-    } else {
-        return 60; // Default to 1 hour if period is not recognized
-    }
-
+function getPeriodInMinutes(array $period): int {
+    $number = (int)$period[0] ?? 1;
+    $unit = $period[1] ?? 'hours';
     switch ($unit) {
-        case str_starts_with($unit, 'mi'):
+        case 'minutes':
             return $number * 1;
-        case str_starts_with($unit, 'h'):
+        case 'quarters':
+            return $number * 15;
+        case 'hours':
             return $number * 60;
-        case str_starts_with($unit, 'd'):
+        case 'days':
             return $number * 1440;
-        case str_starts_with($unit, 'w'):
+        case 'weeks':
             return $number * 10080;
-        case str_starts_with($unit, 'mo'):
+        case 'months':
             return $number * 43200;
-        case str_starts_with($unit, 'y'):
+        case 'years':
             return $number * 525600;
         default:
-            return 60; // Default to 1 hour if period is not recognized
+            response('Invalid period unit', 'text/plain', 400);
+            return 0;
     }
 }

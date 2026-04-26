@@ -13,10 +13,10 @@
 
         function drawChart() {
             var data = google.visualization.arrayToDataTable(<?= $data['chartDataJson'] ?>);
-            
+
             // Get the actual min/max from the data
             var dateRange = data.getColumnRange(0);
-            
+
             var options = {
                 title: 'Numeric Value Graph',
                 curveType: 'function',
@@ -38,10 +38,80 @@
             chart.draw(data, options);
         }
     </script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+
+        .submenu-button {
+            position: absolute;
+            top: 0;
+            left: 0;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+
+        .submenu-button a {
+            text-decoration: none;
+            font-size: 24px;
+            color: #333;
+        }
+
+        .submenu {
+            display: none;
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            border: 1px solid #ccc;
+            background: #fdfdfd;
+            padding: 10px;
+            z-index: 1000;
+            white-space: nowrap;
+        }
+
+        .submenu a {
+            text-decoration: none;
+            font-size: 18px;
+            color: #333;
+            float: right;
+            top: -5px;
+            left: 2px;
+            position: relative;
+        }
+
+        .submenu label,
+        .submenu input,
+        .submenu select,
+        .submenu input[type="submit"],
+        .submenu input[type="button"] {
+            margin: 5px;
+        }
+    </style>
 </head>
 
 <body>
-    <div id="curve_chart" style="width: 1200px; height: 600px"></div>
+    <div style="position: relative;">
+        <div id="curve_chart" style="width: 1200px; height: 600px"></div>
+        <div class="submenu-button"><a href="#" onclick="getElementById('submenu').style.display = 'block'; return false;">☰</a></div>
+        <div class="submenu" id="submenu">
+            <form>
+                <b>Settings</b> <a href="#" onclick="getElementById('submenu').style.display = 'none'; return false;">✖</a><br>
+                <label for="period">Period</label>
+                <input type="number" id="period" name="period" value="<?= isset($_GET['period']) ? $_GET['period'] : '1' ?>" min="1" max="365" width="3">
+                <select id="period_unit" name="period_unit">
+                    <option value="minutes" <?= $_GET['period_unit'] === 'minutes' ? 'selected' : '' ?>>Minute(s)</option>
+                    <option value="quarters" <?= $_GET['period_unit'] === 'quarters' ? 'selected' : '' ?>>Quarter(s)</option>
+                    <option value="hours" <?= $_GET['period_unit'] === 'hours' ? 'selected' : '' ?>>Hour(s)</option>
+                    <option value="days" <?= $_GET['period_unit'] === 'days' ? 'selected' : '' ?>>Day(s)</option>
+                    <option value="weeks" <?= $_GET['period_unit'] === 'weeks' ? 'selected' : '' ?>>Week(s)</option>
+                    <option value="months" <?= $_GET['period_unit'] === 'months' ? 'selected' : '' ?>>Month(s)</option>
+                    <option value="years" <?= $_GET['period_unit'] === 'years' ? 'selected' : '' ?>>Year(s)</option>
+                </select><br>
+                <label for="datasets">Datasets</label><br>
+                <input type="submit" value="Apply">
+            </form>
+        </div>
+    </div>
 </body>
 
 </html>
