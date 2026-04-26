@@ -391,6 +391,12 @@ function loadData(string $hash, string $dataset, string $aggregationLevel, strin
         });
     }
 
+    // Add from timestamp as the first entry if it's not already included and from is specified
+    $firstEntry = reset($data);
+    if ($from > 0 && !empty($firstEntry) && $firstEntry[0] > $from) {
+        array_unshift($data, [$from, 'null', 'null', 'null', 'null']);
+    }
+
     // If aggregationType is specified, filter data accordingly (e.g., if aggregationType is 'max', return only the max values)
     if ($aggregationType !== 'all') {
         $typeIndex = ['avg' => 1, 'min' => 2, 'max' => 3, 'last' => 4][$aggregationType] ?? 1;
@@ -456,9 +462,15 @@ function generateGraphData(string $hash, string $period = '1hour', array $datase
     // Iterate datasets and get data for each
     updateMeta('lastAccessed', $hash);
     $data = [];
+    $startFrom = CURRENT_TIMESTAMP - $periodInMinutes * 60;
     foreach ($datasets as $dataset) {
         updateMeta('lastAccessed', $hash, $dataset['name']);
-        $data[$dataset['name']] = loadData($hash, $dataset['name'], $aggregationLevel, $dataset['type'], CURRENT_TIMESTAMP - $periodInMinutes * 60);
+        $data[$dataset['name']] = loadData($hash, $dataset['name'], $aggregationLevel, $dataset['type'], $startFrom);
+
+        // Add current timestamp with null value if there is no data point for the current period to make sure the graph always reaches the current time
+        if (empty($data[$dataset['name']]) || end($data[$dataset['name']])[0] < CURRENT_TIMESTAMP) {
+            $data[$dataset['name']][] = [CURRENT_TIMESTAMP, 'null'];
+        }
     }
 
     // No data to show
@@ -478,13 +490,13 @@ function generateGraphData(string $hash, string $period = '1hour', array $datase
         $timestamps = [];
         foreach ($data as $entries) {
             foreach ($entries as $entry) {
-                $timestamps[$entry[0]] = true;
+                $timestamps[] = $entry[0];
             }
         }
-        ksort($timestamps);
+        sort($timestamps);
 
         // Build rows with values for each dataset
-        foreach (array_keys($timestamps) as $timestamp) {
+        foreach ($timestamps as $timestamp) {
             $chartDataJson .= ",[new Date(" . $timestamp * 1000 . ")";
             foreach ($data as $entries) {
                 $value = null;

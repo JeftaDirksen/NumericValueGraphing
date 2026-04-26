@@ -13,6 +13,10 @@
 
         function drawChart() {
             var data = google.visualization.arrayToDataTable(<?= $data['chartDataJson'] ?>);
+            
+            // Get the actual min/max from the data
+            var dateRange = data.getColumnRange(0);
+            
             var options = {
                 title: 'Numeric Value Graph',
                 curveType: 'function',
@@ -20,6 +24,12 @@
                 lineWidth: 2,
                 legend: {
                     position: 'bottom'
+                },
+                hAxis: {
+                    viewWindow: {
+                        min: dateRange.min,
+                        max: dateRange.max
+                    }
                 }
             };
 
