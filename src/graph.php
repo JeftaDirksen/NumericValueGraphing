@@ -49,6 +49,7 @@
             left: 0;
             padding: 5px 10px;
             cursor: pointer;
+            visibility: <?= $data['hm'] ? 'hidden' : 'visible' ?>;
         }
 
         .submenu-button a {
@@ -79,12 +80,24 @@
             position: relative;
         }
 
+        .submenu span {
+            float: right;
+            position: relative;
+            font-size: smaller;
+            margin-top: 10px;
+        }
+
         .submenu label,
         .submenu input,
         .submenu select,
         .submenu input[type="submit"],
         .submenu input[type="button"] {
             margin: 5px;
+        }
+
+        .submenu label {
+            font-size: small;
+            font-weight: bold;
         }
     </style>
 </head>
@@ -107,7 +120,20 @@
                     <option value="years" <?= $data['pu'] === 'years' ? 'selected' : '' ?>>Year(s)</option>
                 </select><br>
                 <label>Datasets</label><br>
+                <?php foreach ($data['datasets'] as $key => $dataset): ?>
+                    <input type="hidden" name="de<?= $key + 1 ?>" value="0">
+                    <input type="checkbox" name="de<?= $key + 1 ?>" value="1" <?= $dataset['enabled'] ? 'checked' : '' ?>>
+                    <?= $dataset['name'] ?>
+                    <select name="da<?= $key + 1 ?>">
+                        <option value="avg" <?= $dataset['aggregation'] === 'avg' ? 'selected' : '' ?>>Average</option>
+                        <option value="min" <?= $dataset['aggregation'] === 'min' ? 'selected' : '' ?>>Minimum</option>
+                        <option value="max" <?= $dataset['aggregation'] === 'max' ? 'selected' : '' ?>>Maximum</option>
+                        <option value="last" <?= $dataset['aggregation'] === 'last' ? 'selected' : '' ?>>Last</option>
+                    </select><br>
+                <?php endforeach; ?>
                 <input type="submit" value="Apply">
+                <input type="hidden" name="hm" value="0">
+                <span>Hide menu button<input type="checkbox" name="hm" value="1" <?= $data['hm'] ? 'checked' : '' ?>></span>
             </form>
         </div>
     </div>

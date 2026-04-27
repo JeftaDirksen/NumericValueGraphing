@@ -42,14 +42,14 @@ if (METHOD === 'GET' && HTML) {
         // Period parameters
         $period = validatePeriod($_GET['pn'] ?? '1', $_GET['pu'] ?? 'hours');
         // Hide menu parameter
-        $hideMenu = isset($_GET['hm']) && ($_GET['hm'] === '1' || $_GET['hm'] === 'true');
+        $hideMenu = isset($_GET['hm']) && ($_GET['hm'] === '1');
         // Datasets parameters
         $datasetNames = getDatasetNames($hash);
         if (empty($datasetNames)) response('No graphs found', 'text/plain', 404);
         $datasets = [];
         for ($i = 1; $i <= count($datasetNames); $i++) {
             $name = $datasetNames[$i - 1] ?? '';
-            $enabled = isset($_GET["de$i"]) ? ($_GET["de$i"] === '1' || $_GET["de$i"] === 'true') : true;
+            $enabled = isset($_GET["de$i"]) ? ($_GET["de$i"] === '1') : true;
             $aggregation = validateAggregationType($_GET["da$i"] ?? 'avg');
             $datasets[] = ['name' => validateDataset($name), 'enabled' => $enabled, 'aggregation' => $aggregation];
         }
@@ -59,6 +59,7 @@ if (METHOD === 'GET' && HTML) {
         $data['hm'] = $hideMenu;
         $data['pn'] = $period[0];
         $data['pu'] = $period[1];
+        $data['datasets'] = $datasets;
         $data['chartDataJson'] = generateGraphData($hash, $period, $datasets);
         response_file('graph.php', $data);
     }
