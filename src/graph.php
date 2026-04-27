@@ -70,6 +70,10 @@
             white-space: nowrap;
         }
 
+        .submenu table {
+            border-collapse: collapse;
+        }
+
         .submenu a {
             text-decoration: none;
             font-size: 18px;
@@ -120,17 +124,27 @@
                     <option value="years" <?= $data['pu'] === 'years' ? 'selected' : '' ?>>Year(s)</option>
                 </select><br>
                 <label>Datasets</label><br>
-                <?php foreach ($data['datasets'] as $key => $dataset): ?>
-                    <input type="hidden" name="de<?= $key + 1 ?>" value="0">
-                    <input type="checkbox" name="de<?= $key + 1 ?>" value="1" <?= $dataset['enabled'] ? 'checked' : '' ?> title="Show/hide dataset">
-                    <span title="Dataset name"><?= $dataset['name'] ?></span>
-                    <select name="da<?= $key + 1 ?>" title="Aggregation type">
-                        <option value="avg" <?= $dataset['aggregation'] === 'avg' ? 'selected' : '' ?>>Average</option>
-                        <option value="min" <?= $dataset['aggregation'] === 'min' ? 'selected' : '' ?>>Minimum</option>
-                        <option value="max" <?= $dataset['aggregation'] === 'max' ? 'selected' : '' ?>>Maximum</option>
-                        <option value="last" <?= $dataset['aggregation'] === 'last' ? 'selected' : '' ?>>Last</option>
-                    </select><br>
-                <?php endforeach; ?>
+                <table>
+                    <?php foreach ($data['datasets'] as $key => $dataset): ?>
+                        <tr>
+                            <td>
+                                <input type="hidden" name="de<?= $key + 1 ?>" value="0">
+                                <input type="checkbox" name="de<?= $key + 1 ?>" value="1" <?= $dataset['enabled'] ? 'checked' : '' ?> title="Show/hide dataset">
+                            </td>
+                            <td>
+                                <span title="Dataset name"><?= $dataset['name'] ?></span>
+                            </td>
+                            <td>
+                                <select name="da<?= $key + 1 ?>" title="Aggregation type">
+                                    <option value="avg" <?= $dataset['aggregation'] === 'avg' ? 'selected' : '' ?>>Average</option>
+                                    <option value="min" <?= $dataset['aggregation'] === 'min' ? 'selected' : '' ?>>Minimum</option>
+                                    <option value="max" <?= $dataset['aggregation'] === 'max' ? 'selected' : '' ?>>Maximum</option>
+                                    <option value="last" <?= $dataset['aggregation'] === 'last' ? 'selected' : '' ?>>Last</option>
+                                </select>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </table>
                 <input type="submit" value="Apply">
                 <input type="hidden" name="hm" value="0">
                 <span class="hm" title="Hide menu button (use browser back button to show again)">
