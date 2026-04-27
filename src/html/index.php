@@ -72,15 +72,16 @@ if (METHOD === 'GET' && HTML) {
 
 // API request
 if (METHOD === 'GET' && !HTML) {
-
+    // Example: curl http://localhost:8080/d7c58323b604b471 
     // Datasets request
     if (isset($_GET['path'])) {
         $hash = validateHash($_GET['path']);
-        $datasets = getDatasets($hash);
+        $datasets = getDatasetNames($hash);
         $response = ['datasets' => $datasets];
         response(json_encode($response, JSON_PRETTY_PRINT), 'application/json');
     }
 
+    // Example: curl http://localhost:8080
     // API Usage instructions
     else {
         $url = getUrl();
@@ -93,6 +94,7 @@ if (METHOD === 'GET' && !HTML) {
 
 // POST
 if (METHOD === 'POST') {
+    // Example: curl -d secret=YourSecretString -d line1data=3 -d line2data=4.5 http://localhost:8080
 
     // Wrong URL
     if (isset($_GET['path'])) {
@@ -335,32 +337,6 @@ function hashExists(string $hash): bool {
     return false;
 }
 
-// Conversion functions
-function dsStringToArray(string $dsString): array {
-    $dsArray = [];
-
-    // Split the string by commas, trim whitespace, and filter out empty entries
-    $dsStrings = array_filter(array_map('trim', explode(',', $dsString)), fn($ds) => $ds !== '');
-
-    foreach ($dsStrings as $ds) {
-        // Split each dataset string into name and type, defaulting to 'avg' if type is not provided
-        [$name, $type] = array_pad(explode(':', $ds, 2), 2, 'avg');
-        $name = validateDataset(trim($name));
-        $type = validateAggregationType($type ?: 'avg');
-        $dsArray[] = ['name' => $name, 'type' => $type];
-    }
-
-    return $dsArray;
-}
-
-function dsArrayToString(array $dsArray): string {
-    $dsStrings = array_map(
-        fn($ds) => $ds['name'] . ':' . ($ds['type'] ?? 'avg'),
-        $dsArray
-    );
-    return implode(',', $dsStrings);
-}
-
 // Data functions
 function loadData(string $hash, string $dataset, string $resolution, string $aggregation = 'all', int $from = 0): array {
     $file = DATA_DIR . $hash . '_' . $dataset . '_' . $resolution . '.json';
@@ -401,17 +377,6 @@ function appendData(string $hash, string $dataset, string $type, array $entry): 
     $data = loadData($hash, $dataset, $type);
     $data[] = $entry;
     saveData($hash, $dataset, $type, $data);
-}
-
-function getDatasets(string $hash): array {
-    // Iterate files in DATA_DIR and find the datasets for the given hash
-    $datasets = [];
-    foreach (glob(DATA_DIR . $hash . '_*_samples.json') as $file) {
-        $filename = basename($file);
-        $parts = explode('_', $filename);
-        $datasets[] = $parts[1];
-    }
-    return dsStringToArray(implode(',', $datasets));
 }
 
 function getDatasetNames(string $hash): array {
