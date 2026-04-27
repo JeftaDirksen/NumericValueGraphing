@@ -80,7 +80,7 @@
             position: relative;
         }
 
-        .submenu span {
+        .submenu .hm {
             float: right;
             position: relative;
             font-size: smaller;
@@ -109,9 +109,9 @@
         <div class="submenu" id="submenu">
             <form>
                 <b>Settings</b> <a href="#" onclick="getElementById('submenu').style.display = 'none'; return false;">✖</a><br>
-                <label>Period</label>
-                <input type="number" name="pn" value="<?= $data['pn'] ?>" min="1" max="365" width="3">
-                <select name="pu">
+                <label title="Lookback period">Period</label>
+                <input type="number" name="pn" value="<?= $data['pn'] ?>" min="1" max="365" title="Lookback period">
+                <select name="pu" title="Lookback period">
                     <option value="minutes" <?= $data['pu'] === 'minutes' ? 'selected' : '' ?>>Minute(s)</option>
                     <option value="hours" <?= $data['pu'] === 'hours' ? 'selected' : '' ?>>Hour(s)</option>
                     <option value="days" <?= $data['pu'] === 'days' ? 'selected' : '' ?>>Day(s)</option>
@@ -122,9 +122,9 @@
                 <label>Datasets</label><br>
                 <?php foreach ($data['datasets'] as $key => $dataset): ?>
                     <input type="hidden" name="de<?= $key + 1 ?>" value="0">
-                    <input type="checkbox" name="de<?= $key + 1 ?>" value="1" <?= $dataset['enabled'] ? 'checked' : '' ?>>
-                    <?= $dataset['name'] ?>
-                    <select name="da<?= $key + 1 ?>">
+                    <input type="checkbox" name="de<?= $key + 1 ?>" value="1" <?= $dataset['enabled'] ? 'checked' : '' ?> title="Show/hide dataset">
+                    <span title="Dataset name"><?= $dataset['name'] ?></span>
+                    <select name="da<?= $key + 1 ?>" title="Aggregation type">
                         <option value="avg" <?= $dataset['aggregation'] === 'avg' ? 'selected' : '' ?>>Average</option>
                         <option value="min" <?= $dataset['aggregation'] === 'min' ? 'selected' : '' ?>>Minimum</option>
                         <option value="max" <?= $dataset['aggregation'] === 'max' ? 'selected' : '' ?>>Maximum</option>
@@ -133,7 +133,10 @@
                 <?php endforeach; ?>
                 <input type="submit" value="Apply">
                 <input type="hidden" name="hm" value="0">
-                <span>Hide menu button<input type="checkbox" name="hm" value="1" <?= $data['hm'] ? 'checked' : '' ?>></span>
+                <span class="hm" title="Hide menu button (use browser back button to show again)">
+                    <input type="checkbox" name="hm" value="1" <?= $data['hm'] ? 'checked' : '' ?>>
+                    Hide menu button
+                </span>
             </form>
         </div>
     </div>
