@@ -11,7 +11,8 @@ define('DATA_DIR', '/data/');
 define('SECRET_PATTERN', '/^[A-Za-z0-9_-]{5,50}$/');
 define('DATASET_PATTERN', '/^[a-z0-9-]{1,15}$/');
 define('HASH_PATTERN', '/^[0-9a-f]{16}$/');
-define('AGGREGATION_LEVELS', ['minutes', 'quarters', 'hours', 'days', 'weeks', 'months', 'years']);
+define('RESOLUTIONS', ['minutes', 'quarters', 'hours', 'days', 'weeks', 'months', 'years']);
+define('PERIOD_UNITS', ['minutes', 'hours', 'days', 'weeks', 'months', 'years']);
 define('MAX_DATA_POINTS', 250);
 define('CURRENT_TIMESTAMP', time());
 define('CURRENT_FORMATTED_DATETIME', (new DateTime())->format(DateTime::ATOM));
@@ -28,24 +29,36 @@ if (METHOD === 'GET' && HTML) {
         $hash = validateHash($_GET['path']);
         if (!hashExists($hash)) response('No graphs found', 'text/plain', 404);
 
-        // Check datasets
-        if (!empty($_GET['datasets'])) {
-            $datasets = dsStringToArray($_GET['datasets']);
-        } else {
-            $datasets = getDatasets($hash);
-        }
-        if (empty($datasets)) response('No graphs found', 'text/plain', 404);
-
-        // Check period
-        $period = validatePeriod($_GET['period'] ?? '1', $_GET['period_unit'] ?? 'hours');
-
-        // Rewrite URL if parameters are missing to make it shareable with all necessary parameters
-        if (!isset($_GET['period']) || !isset($_GET['period_unit']) || !isset($_GET['datasets']) || (empty($_GET['datasets']) && !empty($datasets))) {
-            redirect($hash . '?period=' . $period[0] . '&period_unit=' . $period[1] . '&datasets=' . dsArrayToString($datasets));
+        // Get parameters from URL and validate them
+        /*
+          Expected URL parameters:
+          pn = number representing the lookback period to show (e.g., 1, 24, 7) (default: 1)
+          pu = unit of the lookback period (minutes, quarters, hours, days, weeks, months, years) (default: hours)
+          hm = hide menu (1 or 0) (default: 0)
+          de1 = dataset enabled (1 or 0) (default: 1)
+          da1 = dataset aggregation type (avg, min, max, last) (default: avg)
+          de2...
+        */
+        // Period parameters
+        $period = validatePeriod($_GET['pn'] ?? '1', $_GET['pu'] ?? 'hours');
+        // Hide menu parameter
+        $hideMenu = isset($_GET['hm']) && ($_GET['hm'] === '1' || $_GET['hm'] === 'true');
+        // Datasets parameters
+        $datasetNames = getDatasetNames($hash);
+        if (empty($datasetNames)) response('No graphs found', 'text/plain', 404);
+        $datasets = [];
+        for ($i = 1; $i <= count($datasetNames); $i++) {
+            $name = $datasetNames[$i - 1] ?? '';
+            $enabled = isset($_GET["de$i"]) ? ($_GET["de$i"] === '1' || $_GET["de$i"] === 'true') : true;
+            $aggregation = validateAggregationType($_GET["da$i"] ?? 'avg');
+            $datasets[] = ['name' => validateDataset($name), 'enabled' => $enabled, 'aggregation' => $aggregation];
         }
 
         // Generate graph data and show graph
         $data['title'] = 'Numeric Value Graph - ' . implode(' ', array_column($datasets, 'name'));
+        $data['hm'] = $hideMenu;
+        $data['pn'] = $period[0];
+        $data['pu'] = $period[1];
         $data['chartDataJson'] = generateGraphData($hash, $period, $datasets);
         response_file('graph.php', $data);
     }
@@ -134,10 +147,10 @@ function aggregateData(string $hash, string $dataset): void {
 }
 
 function cleanupData(string $hash, string $dataset): void {
-    foreach (AGGREGATION_LEVELS as $aggLevel) {
-        $data = loadData($hash, $dataset, $aggLevel);
+    foreach (RESOLUTIONS as $resolution) {
+        $data = loadData($hash, $dataset, $resolution);
         if ($data === []) continue;
-        saveData($hash, $dataset, $aggLevel, array_slice($data, -MAX_DATA_POINTS));
+        saveData($hash, $dataset, $resolution, array_slice($data, -MAX_DATA_POINTS));
     }
 }
 
@@ -268,22 +281,21 @@ function validateAggregationType(string $type): string {
     return $type;
 }
 
-function validatePeriod(string $period, string $unit): array {
-    $period = strtolower(trim($period));
+function validatePeriod(string $number, string $unit): array {
+    $number = strtolower(trim($number));
     $unit = strtolower(trim($unit));
 
     // Check if period is a number
-    if (!is_numeric($period)) {
+    if (!is_numeric($number)) {
         response('Period must be a number', 'text/plain', 400);
     }
 
     // Check if unit is valid
-    $validUnits = ['minutes', 'quarters', 'hours', 'days', 'weeks', 'months', 'years'];
-    if (!in_array($unit, $validUnits, true)) {
+    if (!in_array($unit, PERIOD_UNITS, true)) {
         response('Invalid period unit', 'text/plain', 400);
     }
 
-    return [(int)$period, $unit];
+    return [(int)$number, $unit];
 }
 
 function validateSecret(string $secret): string {
@@ -349,8 +361,8 @@ function dsArrayToString(array $dsArray): string {
 }
 
 // Data functions
-function loadData(string $hash, string $dataset, string $aggregationLevel, string $aggregationType = 'all', int $from = 0): array {
-    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $aggregationLevel . '.json';
+function loadData(string $hash, string $dataset, string $resolution, string $aggregation = 'all', int $from = 0): array {
+    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $resolution . '.json';
     if (!file_exists($file)) return [];
     $data = json_decode(file_get_contents($file), true);
 
@@ -367,9 +379,9 @@ function loadData(string $hash, string $dataset, string $aggregationLevel, strin
         array_unshift($data, [$from, 'null', 'null', 'null', 'null']);
     }
 
-    // If aggregationType is specified, filter data accordingly (e.g., if aggregationType is 'max', return only the max values)
-    if ($aggregationType !== 'all') {
-        $typeIndex = ['avg' => 1, 'min' => 2, 'max' => 3, 'last' => 4][$aggregationType] ?? 1;
+    // If aggregation is specified, filter data accordingly (e.g., if aggregation is 'max', return only the max values)
+    if ($aggregation !== 'all') {
+        $typeIndex = ['avg' => 1, 'min' => 2, 'max' => 3, 'last' => 4][$aggregation] ?? 1;
         $data = array_map(function ($entry) use ($typeIndex) {
             return [$entry[0], $entry[$typeIndex]];
         }, $data);
@@ -378,8 +390,8 @@ function loadData(string $hash, string $dataset, string $aggregationLevel, strin
     return $data;
 }
 
-function saveData(string $hash, string $dataset, string $type, array $data): void {
-    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $type . '.json';
+function saveData(string $hash, string $dataset, string $resolution, array $data): void {
+    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $resolution . '.json';
     file_put_contents($file, json_encode($data), LOCK_EX);
     updateMeta('lastModified', $hash, $dataset);
 }
@@ -401,30 +413,27 @@ function getDatasets(string $hash): array {
     return dsStringToArray(implode(',', $datasets));
 }
 
+function getDatasetNames(string $hash): array {
+    // Iterate files in DATA_DIR and find the datasets for the given hash
+    $names = [];
+    foreach (glob(DATA_DIR . $hash . '_*_samples.json') as $file) {
+        $filename = basename($file);
+        $parts = explode('_', $filename);
+        $names[] = $parts[1];
+    }
+    sort($names);
+    return $names;
+}
+
 function generateGraphData(string $hash, array $period = ['1', 'hours'], array $datasets = []): string {
-    // Get datasets from URL
-    if (empty($datasets)) {
-        $datasets = empty($_GET['datasets']) ? [] : dsStringToArray($_GET['datasets']);
-    }
-
-    // If no datasets specified or parse resulted in empty, get all datasets for this hash
-    if (empty($datasets)) {
-        $datasets = dsStringToArray(implode(',', getDatasets($hash)));
-    }
-
-    // Redirect to add missing parameters
-    if (!isset($_GET['period']) || !isset($_GET['period_unit']) || !isset($_GET['datasets']) || (empty($_GET['datasets']) && !empty($datasets))) {
-        redirect($hash . '?period=' . $period[0] . '&period_unit=' . $period[1] . '&datasets=' . dsArrayToString($datasets));
-    }
-
-    // Calculate smallest aggregation level that keeps the number of data points under MAX_DATA_POINTS
+    // Calculate smallest resolution that keeps the number of data points under MAX_DATA_POINTS
     $periodInMinutes = getPeriodInMinutes($period);
-    $aggregationLevelsMinutes = ['minutes' => 1, 'quarters' => 15, 'hours' => 60, 'days' => 1440, 'weeks' => 10080, 'months' => 43680, 'years' => 524160];
-    $aggregationLevel = 'years'; // Default to years if no suitable level is found
-    foreach ($aggregationLevelsMinutes as $level => $minutes) {
+    $resolutionMinutes = ['minutes' => 1, 'quarters' => 15, 'hours' => 60, 'days' => 1440, 'weeks' => 10080, 'months' => 43680, 'years' => 524160];
+    $resolution = 'years'; // Default to years if no suitable level is found
+    foreach ($resolutionMinutes as $res => $minutes) {
         $points = $periodInMinutes / $minutes;
         if ($points <= MAX_DATA_POINTS) {
-            $aggregationLevel = $level;
+            $resolution = $res;
             break;
         }
     }
@@ -434,8 +443,9 @@ function generateGraphData(string $hash, array $period = ['1', 'hours'], array $
     $data = [];
     $startFrom = CURRENT_TIMESTAMP - $periodInMinutes * 60;
     foreach ($datasets as $dataset) {
+        if (!$dataset['enabled']) continue; // Skip disabled datasets
         updateMeta('lastAccessed', $hash, $dataset['name']);
-        $data[$dataset['name']] = loadData($hash, $dataset['name'], $aggregationLevel, $dataset['type'], $startFrom);
+        $data[$dataset['name']] = loadData($hash, $dataset['name'], $resolution, $dataset['aggregation'], $startFrom);
 
         // Add current timestamp with null value if there is no data point for the current period to make sure the graph always reaches the current time
         if (empty($data[$dataset['name']]) || end($data[$dataset['name']])[0] < CURRENT_TIMESTAMP) {

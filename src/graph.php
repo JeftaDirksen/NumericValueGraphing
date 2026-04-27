@@ -96,18 +96,17 @@
         <div class="submenu" id="submenu">
             <form>
                 <b>Settings</b> <a href="#" onclick="getElementById('submenu').style.display = 'none'; return false;">✖</a><br>
-                <label for="period">Period</label>
-                <input type="number" id="period" name="period" value="<?= isset($_GET['period']) ? $_GET['period'] : '1' ?>" min="1" max="365" width="3">
-                <select id="period_unit" name="period_unit">
-                    <option value="minutes" <?= $_GET['period_unit'] === 'minutes' ? 'selected' : '' ?>>Minute(s)</option>
-                    <option value="quarters" <?= $_GET['period_unit'] === 'quarters' ? 'selected' : '' ?>>Quarter(s)</option>
-                    <option value="hours" <?= $_GET['period_unit'] === 'hours' ? 'selected' : '' ?>>Hour(s)</option>
-                    <option value="days" <?= $_GET['period_unit'] === 'days' ? 'selected' : '' ?>>Day(s)</option>
-                    <option value="weeks" <?= $_GET['period_unit'] === 'weeks' ? 'selected' : '' ?>>Week(s)</option>
-                    <option value="months" <?= $_GET['period_unit'] === 'months' ? 'selected' : '' ?>>Month(s)</option>
-                    <option value="years" <?= $_GET['period_unit'] === 'years' ? 'selected' : '' ?>>Year(s)</option>
+                <label>Period</label>
+                <input type="number" name="pn" value="<?= $data['pn'] ?>" min="1" max="365" width="3">
+                <select name="pu">
+                    <option value="minutes" <?= $data['pu'] === 'minutes' ? 'selected' : '' ?>>Minute(s)</option>
+                    <option value="hours" <?= $data['pu'] === 'hours' ? 'selected' : '' ?>>Hour(s)</option>
+                    <option value="days" <?= $data['pu'] === 'days' ? 'selected' : '' ?>>Day(s)</option>
+                    <option value="weeks" <?= $data['pu'] === 'weeks' ? 'selected' : '' ?>>Week(s)</option>
+                    <option value="months" <?= $data['pu'] === 'months' ? 'selected' : '' ?>>Month(s)</option>
+                    <option value="years" <?= $data['pu'] === 'years' ? 'selected' : '' ?>>Year(s)</option>
                 </select><br>
-                <label for="datasets">Datasets</label><br>
+                <label>Datasets</label><br>
                 <input type="submit" value="Apply">
             </form>
         </div>
