@@ -37,6 +37,27 @@
 
             chart.draw(data, options);
         }
+
+        function beforeSubmit() {
+            // Disable hidden checkboxes when the visible checkbox is checked
+            var form = document.querySelector('.submenu form');
+            var checkboxes = form.querySelectorAll('input[type="checkbox"][id^="de"]');
+            checkboxes.forEach(function(checkbox) {
+                var hiddenInput = document.getElementById(checkbox.id + 'h');
+                if (checkbox.checked) {
+                    hiddenInput.disabled = true;
+                } else {
+                    hiddenInput.disabled = false;
+                }
+            });
+
+            if (document.getElementById('hm').checked) {
+                document.getElementById('hmh').disabled = true;
+            } else {
+                document.getElementById('hmh').disabled = false;
+            }
+
+        }
     </script>
     <style>
         body {
@@ -128,8 +149,8 @@
                     <?php foreach ($data['datasets'] as $key => $dataset): ?>
                         <tr>
                             <td>
-                                <input type="hidden" name="de<?= $key + 1 ?>" value="0">
-                                <input type="checkbox" name="de<?= $key + 1 ?>" value="1" <?= $dataset['enabled'] ? 'checked' : '' ?> title="Show/hide dataset">
+                                <input type="hidden" id="de<?= $key + 1 ?>h" name="de<?= $key + 1 ?>" value="0">
+                                <input type="checkbox" id="de<?= $key + 1 ?>" name="de<?= $key + 1 ?>" value="1" <?= $dataset['enabled'] ? 'checked' : '' ?> title="Show/hide dataset">
                             </td>
                             <td>
                                 <span title="Dataset name"><?= $dataset['name'] ?></span>
@@ -145,10 +166,10 @@
                         </tr>
                     <?php endforeach; ?>
                 </table>
-                <input type="submit" value="Apply">
-                <input type="hidden" name="hm" value="0">
+                <input type="submit" value="Apply" onclick="beforeSubmit()">
+                <input type="hidden" id="hmh" name="hm" value="0">
                 <span class="hm" title="Hide menu button (use browser back button to show again)">
-                    <input type="checkbox" name="hm" value="1" <?= $data['hm'] ? 'checked' : '' ?>>
+                    <input type="checkbox" id="hm" name="hm" value="1" <?= $data['hm'] ? 'checked' : '' ?>>
                     Hide menu button
                 </span>
             </form>
