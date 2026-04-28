@@ -111,6 +111,8 @@
             margin-top: 10px;
         }
 
+        .submenu h1,
+        .submenu h2,
         .submenu label,
         .submenu input,
         .submenu select,
@@ -119,9 +121,16 @@
             margin: 5px;
         }
 
-        .submenu label {
+        .submenu h1 {
+            font-size: medium;
+            font-weight: bold;
+            display: inline-block;
+        }
+
+        .submenu h2 {
             font-size: small;
             font-weight: bold;
+            display: inline-block;
         }
     </style>
 </head>
@@ -132,8 +141,8 @@
         <div class="submenu-button"><a href="#" onclick="getElementById('submenu').style.display = 'block'; return false;">☰</a></div>
         <div class="submenu" id="submenu">
             <form>
-                <b>Settings</b> <a href="#" onclick="getElementById('submenu').style.display = 'none'; return false;">✖</a><br>
-                <label title="Lookback period">Period</label>
+                <h1>Settings</h1> <a href="#" onclick="getElementById('submenu').style.display = 'none'; return false;">✖</a><br>
+                <h2 title="Lookback period">Period</h2>
                 <input type="number" name="pn" value="<?= $data['pn'] ?>" min="1" max="365" title="Lookback period">
                 <select name="pu" title="Lookback period">
                     <option value="minutes" <?= $data['pu'] === 'minutes' ? 'selected' : '' ?>>Minute(s)</option>
@@ -143,7 +152,7 @@
                     <option value="months" <?= $data['pu'] === 'months' ? 'selected' : '' ?>>Month(s)</option>
                     <option value="years" <?= $data['pu'] === 'years' ? 'selected' : '' ?>>Year(s)</option>
                 </select><br>
-                <label>Datasets</label><br>
+                <h2>Datasets</h2>
                 <table>
                     <?php foreach ($data['datasets'] as $key => $dataset): ?>
                         <tr>
@@ -152,7 +161,7 @@
                                 <input type="checkbox" id="de<?= $key + 1 ?>" name="de<?= $key + 1 ?>" value="1" <?= $dataset['enabled'] ? 'checked' : '' ?> title="Show/hide dataset">
                             </td>
                             <td>
-                                <span title="Dataset name"><?= $dataset['name'] ?></span>
+                                <label for="de<?= $key + 1 ?>" title="Dataset name"><?= $dataset['name'] ?></label>
                             </td>
                             <td>
                                 <select name="da<?= $key + 1 ?>" title="Aggregation type">
