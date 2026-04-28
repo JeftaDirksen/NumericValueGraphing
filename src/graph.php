@@ -19,7 +19,6 @@
 
             var options = {
                 title: 'Numeric Value Graph',
-                curveType: 'function',
                 interpolateNulls: true,
                 lineWidth: 2,
                 legend: {
