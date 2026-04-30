@@ -1,3 +1,7 @@
+<?php
+
+/** @var array $data */
+?>
 <!doctype html>
 <html>
 
@@ -23,6 +27,12 @@
                 lineWidth: 2,
                 legend: {
                     position: 'bottom'
+                },
+                chartArea: {
+                    left: 60,
+                    top: 60,
+                    width: '90%',
+                    height: '75%'
                 },
                 hAxis: {
                     viewWindow: {
@@ -137,7 +147,7 @@
 
 <body>
     <div style="position: relative;">
-        <div id="curve_chart" style="width: 1200px; height: 600px"></div>
+        <div id="curve_chart" style="width: 100%; max-width: 1200px; height: 600px;"></div>
         <div class="submenu-button"><a href="#" onclick="getElementById('submenu').style.display = 'block'; return false;">☰</a></div>
         <div class="submenu" id="submenu">
             <form>
