@@ -47,6 +47,14 @@
             chart.draw(data, options);
         }
 
+        // Refresh page on resize to redraw chart
+        window.addEventListener('resize', function() {
+            clearTimeout(window.resizeTimeout);
+            window.resizeTimeout = setTimeout(function() {
+                location.reload();
+            }, 500);
+        });
+
         function beforeSubmit() {
             // Disable hidden checkboxes when the visible checkbox is checked
             var form = document.querySelector('.submenu form');
