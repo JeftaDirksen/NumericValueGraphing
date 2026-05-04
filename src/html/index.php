@@ -341,7 +341,7 @@ function hashExists(string $hash): bool {
 function loadData(string $hash, string $dataset, string $resolution, string $aggregation = 'all', int $from = 0): array {
     $file = DATA_DIR . $hash . '_' . $dataset . '_' . $resolution . '.json';
     if (!file_exists($file)) return [];
-    $data = json_decode(file_get_contents($file), true);
+    $data = file_get_json($file);
 
     // If from is specified, filter data to only include entries with timestamp greater than or equal to from
     if ($from > 0) {
@@ -487,13 +487,31 @@ function getConfig(): array {
         $salt = bin2hex(random_bytes(16));
         file_put_contents($configFile, json_encode(['salt' => $salt], JSON_PRETTY_PRINT));
     }
-    return json_decode(file_get_contents($configFile), true);
+    return file_get_json($configFile);
+}
+
+function file_get_json(string $jsonFileName): array {
+    $contents = null;
+    $fp = fopen($jsonFileName, 'r');
+    if (flock($fp, LOCK_SH)) {
+        $contents = stream_get_contents($fp);
+        flock($fp, LOCK_UN);
+        fclose($fp);
+    } else {
+        fclose($fp);
+        response("Could not read file $jsonFileName", 'text/plain', 500);
+    }
+    $decoded = json_decode($contents, true);
+    if ($decoded === null) {
+        response("Could not decode JSON from file $jsonFileName", 'text/plain', 500);
+    }
+    return $decoded;
 }
 
 function getMeta(): array {
     $metaFile = DATA_DIR . 'meta.json';
     if (!file_exists($metaFile)) return [];
-    return json_decode(file_get_contents($metaFile), true);
+    return file_get_json($metaFile);
 }
 
 function updateMeta(string $key, string $hash, string $datasetName = ''): void {
