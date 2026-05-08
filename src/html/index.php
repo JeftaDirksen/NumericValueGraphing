@@ -60,6 +60,7 @@ if (METHOD === 'GET' && HTML) {
         $data['pn'] = $period[0];
         $data['pu'] = $period[1];
         $data['datasets'] = $datasets;
+        $data['resolution'] = getResolution($period);
         $data['chartDataJson'] = generateGraphData($hash, $period, $datasets);
         response_file('graph.php', $data);
     }
@@ -391,18 +392,20 @@ function getDatasetNames(string $hash): array {
     return $names;
 }
 
-function generateGraphData(string $hash, array $period = ['1', 'hours'], array $datasets = []): string {
-    // Calculate smallest resolution that keeps the number of data points under MAX_DATA_POINTS
+function getResolution(array $period): string {
     $periodInMinutes = getPeriodInMinutes($period);
     $resolutionMinutes = ['minutes' => 1, 'quarters' => 15, 'hours' => 60, 'days' => 1440, 'weeks' => 10080, 'months' => 43680, 'years' => 524160];
-    $resolution = 'years'; // Default to years if no suitable level is found
     foreach ($resolutionMinutes as $res => $minutes) {
-        $points = $periodInMinutes / $minutes;
-        if ($points <= MAX_DATA_POINTS) {
-            $resolution = $res;
-            break;
+        if ($periodInMinutes <= $minutes * MAX_DATA_POINTS) {
+            return $res;
         }
     }
+    return 'years'; // Default to years if no suitable level is found
+}
+
+function generateGraphData(string $hash, array $period = ['1', 'hours'], array $datasets = []): string {
+    $periodInMinutes = getPeriodInMinutes($period);
+    $resolution = getResolution($period);
 
     // Iterate datasets and get data for each
     updateMeta('lastAccessed', $hash);

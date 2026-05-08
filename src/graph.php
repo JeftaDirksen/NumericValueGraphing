@@ -154,6 +154,7 @@
             font-size: medium;
             margin: 10px 0 5px 50px;
         }
+
         .graph-title h2 {
             font-size: small;
             margin: 0 0 5px 50px;
@@ -166,7 +167,7 @@
     <div style="position: relative;">
         <div class="graph-title">
             <h1>Numeric Value Graph</h1>
-            <h2><?= $data['pn']. ' ' . ($data['pn'] > 1 ? $data['pu'] : substr($data['pu'], 0, -1)) ?></h2>
+            <h2><?= $data['pn'] . ' ' . ($data['pn'] > 1 ? $data['pu'] : substr($data['pu'], 0, -1)) . ' (' . $data['resolution'] . ')' ?></h2>
         </div>
         <div id="curve_chart" style="width: 100%; max-width: 1200px; height: 600px;"></div>
         <div class="submenu-button"><a href="#" onclick="getElementById('submenu').style.display = 'block'; return false;">☰</a></div>
