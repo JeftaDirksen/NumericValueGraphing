@@ -17,7 +17,27 @@ define('MAX_DATA_POINTS', 250);
 define('CURRENT_TIMESTAMP', time());
 define('CURRENT_FORMATTED_DATETIME', (new DateTime())->format(DateTime::ATOM));
 
-$config = getConfig();
+// Create & connect SQLite database
+$db = new SQLite3(DATA_DIR . 'nvg.db');
+$db->exec('CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)');
+
+// Add salt to config if not already present
+$result = $db->query('SELECT value FROM config WHERE key = "salt"');
+if ($result->fetchArray() === false) {
+    $salt = bin2hex(random_bytes(16));
+    $stmt = $db->prepare('INSERT INTO config (key, value) VALUES (:key, :value)');
+    $stmt->bindValue(':key', 'salt', SQLITE3_TEXT);
+    $stmt->bindValue(':value', $salt, SQLITE3_TEXT);
+    $stmt->execute();
+}
+
+// Get config from database
+$r = $db->query('SELECT * FROM config');
+$config = [];
+while ($row = $r->fetchArray(SQLITE3_ASSOC)) {
+    $config[$row['key']] = $row['value'];
+}
+
 $meta = null; // Will be loaded when needed to avoid unnecessary file read operations
 
 // Browser request
@@ -482,15 +502,6 @@ function generateTestData(string $hash): void {
     }
 
     redirect('?graphurl=' . getUrl($hash) . '&secret=testing&name1=testdata');
-}
-
-function getConfig(): array {
-    $configFile = DATA_DIR . 'config.json';
-    if (!file_exists($configFile)) {
-        $salt = bin2hex(random_bytes(16));
-        file_put_contents($configFile, json_encode(['salt' => $salt], JSON_PRETTY_PRINT));
-    }
-    return file_get_json($configFile);
 }
 
 function file_get_json(string $jsonFileName): array {
