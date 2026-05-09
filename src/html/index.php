@@ -511,25 +511,27 @@ function file_get_json(string $jsonFileName): array {
     return $decoded;
 }
 
-function getMeta(): array {
-    $metaFile = DATA_DIR . 'meta.json';
-    if (!file_exists($metaFile)) return [];
-    return file_get_json($metaFile);
-}
-
 function updateMeta(string $key, string $hash, string $datasetName = ''): void {
-    global $meta;
-    if ($meta === null) $meta = getMeta(); // Load meta data if not already loaded
+    // Lock meta file
+    $metaFile = DATA_DIR . 'meta.json';
+    $fp = fopen($metaFile, 'c+');
+    if (!flock($fp, LOCK_EX)) {
+        fclose($fp);
+        response("Could not read meta file", 'text/plain', 500);
+    }
+    // Get meta
+    $contents = stream_get_contents($fp);
+    $meta = json_decode($contents, true) ?? [];
+    // Merge meta
     $meta[$hash] = array_merge($meta[$hash] ?? ['lastAccessed' => '', 'lastModified' => ''], [$key => CURRENT_FORMATTED_DATETIME]);
     if (!empty($datasetName)) {
         $meta[$hash][$datasetName] = array_merge($meta[$hash][$datasetName] ?? ['lastAccessed' => '', 'lastModified' => ''], [$key => CURRENT_FORMATTED_DATETIME]);
     }
-    saveMeta($meta);
-}
-
-function saveMeta(array $meta): void {
-    $metaFile = DATA_DIR . 'meta.json';
-    file_put_contents($metaFile, json_encode($meta, JSON_PRETTY_PRINT), LOCK_EX);
+    // Save meta
+    ftruncate($fp, 0);
+    rewind($fp);
+    fwrite($fp, json_encode($meta, JSON_PRETTY_PRINT));
+    fclose($fp);
 }
 
 // Helper functions
