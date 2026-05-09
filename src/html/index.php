@@ -22,7 +22,7 @@ $db = new SQLite3(DATA_DIR . 'nvg.db');
 $db->exec('CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)');
 $db->exec('CREATE TABLE IF NOT EXISTS collection (id INTEGER PRIMARY KEY, hash TEXT UNIQUE)');
 $db->exec('CREATE TABLE IF NOT EXISTS dataset (id INTEGER PRIMARY KEY, collection_id INTEGER, name TEXT, FOREIGN KEY(collection_id) REFERENCES collection(id), UNIQUE(collection_id, name))');
-$db->exec('CREATE TABLE IF NOT EXISTS datapoint (dataset_id INTEGER, timestamp INTEGER, value REAL, aggregation TEXT, FOREIGN KEY(dataset_id) REFERENCES dataset(id))');
+$db->exec('CREATE TABLE IF NOT EXISTS datapoint (dataset_id INTEGER, timestamp INTEGER, avg REAL, min REAL, max REAL, last REAL, aggregation TEXT, FOREIGN KEY(dataset_id) REFERENCES dataset(id))');
 
 // Db version
 $db_version = $db->querySingle("SELECT value FROM config WHERE key = 'db_version'");
@@ -144,9 +144,8 @@ if (METHOD === 'POST') {
         $val = validateNumber($value);
         $db->exec("INSERT INTO dataset (collection_id, name) VALUES ($collectionId, '$ds') ON CONFLICT(collection_id, name) DO NOTHING");
         $datasetId = $db->querySingle("SELECT id FROM dataset WHERE collection_id = $collectionId AND name = '$ds'");
-        $db->exec("INSERT INTO datapoint (dataset_id, timestamp, value, aggregation) VALUES ($datasetId, $time, $val, NULL)");
-        //appendData($hash, $ds, 'samples', [$time, $val]);
-        //aggregateData($hash, $ds);
+        $db->exec("INSERT INTO datapoint (dataset_id, timestamp, avg, aggregation) VALUES ($datasetId, $time, $val, 'samples')");
+        aggregateData($datasetId);
     }
 
     // HTML response
@@ -169,20 +168,19 @@ if (METHOD === 'POST') {
 response('Method not allowed', 'text/plain', 405);
 
 // Subroutines
-function aggregateData(string $hash, string $dataset): void {
-    aggregateSamples($hash, $dataset);
+function aggregateData(int $datasetId): void {
+    aggregateDatapoints("samples", "minutes", $datasetId);
+    aggregateDatapoints("minutes", "quarters", $datasetId);
+    aggregateDatapoints("quarters", "hours", $datasetId);
+    aggregateDatapoints("hours", "days", $datasetId);
+    aggregateDatapoints("days", "weeks", $datasetId);
+    aggregateDatapoints("days", "months", $datasetId);
+    aggregateDatapoints("months", "years", $datasetId);
 
-    aggregateLevel("minutes", "quarters", $hash, $dataset);
-    aggregateLevel("quarters", "hours", $hash, $dataset);
-    aggregateLevel("hours", "days", $hash, $dataset);
-    aggregateLevel("days", "weeks", $hash, $dataset);
-    aggregateLevel("days", "months", $hash, $dataset);
-    aggregateLevel("months", "years", $hash, $dataset);
-
-    cleanupData($hash, $dataset);
+    //cleanupData($collectionId, $datasetId);
 }
 
-function cleanupData(string $hash, string $dataset): void {
+function cleanupData(int $collectionId, int $datasetId): void {
     foreach (RESOLUTIONS as $resolution) {
         $data = loadData($hash, $dataset, $resolution);
         if ($data === []) continue;
@@ -205,10 +203,11 @@ function response_file(string $filename, array $data = []): void {
     response($content);
 }
 
-function aggregateSamples(string $hash, string $dataset): void {
+function aggregateSamples(int $datasetId): void {
+    global $db;
     $cur_minute = getPeriodTimestamp(CURRENT_TIMESTAMP, 'minutes');
-    $samples = loadData($hash, $dataset, 'samples');
-    if ($samples === []) return;  // No samples to aggregate
+    $result = $db->query("SELECT timestamp, value FROM datapoint WHERE dataset_id = $datasetId AND aggregation IS NULL ORDER BY timestamp ASC");
+    $samples = $result->fetchAll(SQLITE3_NUM);
 
     $first_minute = getPeriodTimestamp($samples[0][0], 'minutes');
     if ($first_minute >= $cur_minute) return;  // No samples to aggregate yet
@@ -256,11 +255,19 @@ function aggregateSamples(string $hash, string $dataset): void {
     saveData($hash, $dataset, 'samples', $remainingSamples);
 }
 
-function aggregateLevel(string $fromLevel, string $toLevel, string $hash, string $dataset): void {
-    // Load data
-    $fromData = loadData($hash, $dataset, $fromLevel);
-    if ($fromData === []) return;
-    $toData = loadData($hash, $dataset, $toLevel);
+function aggregateDatapoints(string $fromResolution, string $toResolution, int $datasetId): void {
+    global $db;
+
+    $cur_to_timestamp = getPeriodTimestamp(CURRENT_TIMESTAMP, $toResolution);
+
+    $sql = "SELECT timestamp, avg, COALESCE(min, avg) as min, COALESCE(max, avg) as max, COALESCE(last, avg) as last FROM datapoint " .
+        "WHERE dataset_id = $datasetId AND aggregation = '$fromResolution' AND timestamp < $cur_to_timestamp " .
+        "ORDER BY timestamp ASC";
+    $fromData = $db->query($sql)->fetchAll(SQLITE3_ASSOC);
+
+
+
+
 
     $lastToDataPeriod = $toData !== [] ? $toData[array_key_last($toData)][0] : 0;
     $currentToPeriod = getPeriodTimestamp(CURRENT_TIMESTAMP, $toLevel);
@@ -404,12 +411,6 @@ function saveData(string $hash, string $dataset, string $resolution, array $data
     $file = DATA_DIR . $hash . '_' . $dataset . '_' . $resolution . '.json';
     file_put_contents($file, json_encode($data), LOCK_EX);
     updateMeta('lastModified', $hash, $dataset);
-}
-
-function appendData(string $hash, string $dataset, string $type, array $entry): void {
-    $data = loadData($hash, $dataset, $type);
-    $data[] = $entry;
-    saveData($hash, $dataset, $type, $data);
 }
 
 function getDatasetNames(string $hash): array {
