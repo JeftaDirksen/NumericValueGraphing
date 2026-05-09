@@ -20,19 +20,26 @@ define('CURRENT_FORMATTED_DATETIME', (new DateTime())->format(DateTime::ATOM));
 // Create & connect SQLite database
 $db = new SQLite3(DATA_DIR . 'nvg.db');
 $db->exec('CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)');
+$db->exec('CREATE TABLE IF NOT EXISTS collection (id INTEGER PRIMARY KEY, hash TEXT UNIQUE)');
+$db->exec('CREATE TABLE IF NOT EXISTS dataset (id INTEGER PRIMARY KEY, collection_id INTEGER, name TEXT, FOREIGN KEY(collection_id) REFERENCES collection(id), UNIQUE(collection_id, name))');
+$db->exec('CREATE TABLE IF NOT EXISTS datapoint (dataset_id INTEGER, timestamp INTEGER, value REAL, aggregation TEXT, FOREIGN KEY(dataset_id) REFERENCES dataset(id))');
+
+// Db version
+$db_version = $db->querySingle("SELECT value FROM config WHERE key = 'db_version'");
+if ($db_version === false) {
+    $db->exec("INSERT INTO config (key, value) VALUES ('db_version', '1')");
+    $db_version = 1;
+}
 
 // Add salt to config if not already present
-$result = $db->query('SELECT value FROM config WHERE key = "salt"');
+$result = $db->query("SELECT value FROM config WHERE key = 'salt'");
 if ($result->fetchArray() === false) {
     $salt = bin2hex(random_bytes(16));
-    $stmt = $db->prepare('INSERT INTO config (key, value) VALUES (:key, :value)');
-    $stmt->bindValue(':key', 'salt', SQLITE3_TEXT);
-    $stmt->bindValue(':value', $salt, SQLITE3_TEXT);
-    $stmt->execute();
+    $db->exec("INSERT INTO config (key, value) VALUES ('salt', '$salt')");
 }
 
 // Get config from database
-$r = $db->query('SELECT * FROM config');
+$r = $db->query("SELECT * FROM config");
 $config = [];
 while ($row = $r->fetchArray(SQLITE3_ASSOC)) {
     $config[$row['key']] = $row['value'];
@@ -125,6 +132,8 @@ if (METHOD === 'POST') {
     // Store data
     $secret = $_POST['secret'] ?? '';
     $hash = validateSecret($secret);
+    $db->exec("INSERT INTO collection (hash) VALUES ('$hash') ON CONFLICT(hash) DO NOTHING");
+    $collectionId = $db->querySingle("SELECT id FROM collection WHERE hash = '$hash'");
     $time = CURRENT_TIMESTAMP;
     $fields = [];
     foreach ($_POST as $key => $value) {
@@ -133,8 +142,11 @@ if (METHOD === 'POST') {
         $ds = validateDataset($key);
         if ($secret === 'testing' && $ds === 'testdata' && $value === '123') generateTestData($hash); // For testing purposes, generates a lot of random data
         $val = validateNumber($value);
-        appendData($hash, $ds, 'samples', [$time, $val]);
-        aggregateData($hash, $ds);
+        $db->exec("INSERT INTO dataset (collection_id, name) VALUES ($collectionId, '$ds') ON CONFLICT(collection_id, name) DO NOTHING");
+        $datasetId = $db->querySingle("SELECT id FROM dataset WHERE collection_id = $collectionId AND name = '$ds'");
+        $db->exec("INSERT INTO datapoint (dataset_id, timestamp, value, aggregation) VALUES ($datasetId, $time, $val, NULL)");
+        //appendData($hash, $ds, 'samples', [$time, $val]);
+        //aggregateData($hash, $ds);
     }
 
     // HTML response
