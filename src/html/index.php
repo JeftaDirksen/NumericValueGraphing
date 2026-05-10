@@ -20,7 +20,7 @@ define('CURRENT_FORMATTED_DATETIME', (new DateTime())->format(DateTime::ATOM));
 // Create & connect SQLite database
 $db = new SQLite3(DATA_DIR . 'nvg.db');
 $db->exec('CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)');
-$db->exec('CREATE TABLE IF NOT EXISTS collection (id INTEGER PRIMARY KEY, hash TEXT UNIQUE)');
+$db->exec('CREATE TABLE IF NOT EXISTS collection (id INTEGER PRIMARY KEY, hash TEXT UNIQUE, secret TEXT UNIQUE)');
 $db->exec('CREATE TABLE IF NOT EXISTS dataset (id INTEGER PRIMARY KEY, collection_id INTEGER, name TEXT, FOREIGN KEY(collection_id) REFERENCES collection(id), UNIQUE(collection_id, name))');
 $db->exec('CREATE TABLE IF NOT EXISTS datapoint (dataset_id INTEGER, timestamp INTEGER, avg REAL, min REAL, max REAL, last REAL, resolution TEXT, FOREIGN KEY(dataset_id) REFERENCES dataset(id))');
 
@@ -130,8 +130,7 @@ if (METHOD === 'POST') {
     // Store data
     $secret = $_POST['secret'] ?? '';
     $hash = validateSecret($secret);
-    $db->exec("INSERT INTO collection (hash) VALUES ('$hash') ON CONFLICT(hash) DO NOTHING");
-    $collectionId = $db->querySingle("SELECT id FROM collection WHERE hash = '$hash'");
+    $collectionId = createCollection($hash, $secret);
     $time = CURRENT_TIMESTAMP;
     $fields = [];
     foreach ($_POST as $key => $value) {
@@ -140,9 +139,13 @@ if (METHOD === 'POST') {
         $ds = validateDataset($key);
         if ($secret === 'testing' && $ds === 'testdata' && $value === '123') generateTestData($collectionId); // For testing purposes, generates a lot of random data
         $val = validateNumber($value);
-        $db->exec("INSERT INTO dataset (collection_id, name) VALUES ($collectionId, '$ds') ON CONFLICT(collection_id, name) DO NOTHING");
-        $datasetId = $db->querySingle("SELECT id FROM dataset WHERE collection_id = $collectionId AND name = '$ds'");
-        $db->exec("INSERT INTO datapoint (dataset_id, timestamp, avg, resolution) VALUES ($datasetId, $time, $val, 'samples')");
+        $datasetId = createDataset($collectionId, $ds);
+        $stmt = $db->prepare("INSERT INTO datapoint (dataset_id, timestamp, avg, resolution) VALUES (:dataset_id, :timestamp, :avg, :resolution)");
+        $stmt->bindValue(':dataset_id', $datasetId, SQLITE3_INTEGER);
+        $stmt->bindValue(':timestamp', $time, SQLITE3_INTEGER);
+        $stmt->bindValue(':avg', $val, SQLITE3_FLOAT);
+        $stmt->bindValue(':resolution', 'samples', SQLITE3_TEXT);
+        $stmt->execute();
         aggregateData($datasetId);
     }
 
@@ -323,11 +326,38 @@ function validateNumber(string $number): float {
 }
 
 // Data functions
+function createCollection(string $hash, string $secret): int {
+    global $db;
+    $stmt = $db->prepare("INSERT INTO collection (hash, secret) VALUES (:hash, :secret) ON CONFLICT(hash) DO NOTHING");
+    $stmt->bindValue(':hash', $hash, SQLITE3_TEXT);
+    $stmt->bindValue(':secret', $secret, SQLITE3_TEXT);
+    $stmt->execute();
+    return getCollectionId($hash);
+}
+
 function getCollectionId(string $hash): int|false {
     global $db;
     $hash = validateHash($hash);
     $stmt = $db->prepare('SELECT id FROM collection WHERE hash = :hash LIMIT 1');
     $stmt->bindValue(':hash', $hash, SQLITE3_TEXT);
+    $result = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
+    return $result ? (int)$result['id'] : false;
+}
+
+function createDataset(int $collectionId, string $name): int {
+    global $db;
+    $stmt = $db->prepare("INSERT INTO dataset (collection_id, name) VALUES (:collection_id, :name) ON CONFLICT(collection_id, name) DO NOTHING");
+    $stmt->bindValue(':collection_id', $collectionId, SQLITE3_INTEGER);
+    $stmt->bindValue(':name', $name, SQLITE3_TEXT);
+    $stmt->execute();
+    return getDatasetId($collectionId, $name);
+}
+
+function getDatasetId(int $collectionId, string $name): int|false {
+    global $db;
+    $stmt = $db->prepare('SELECT id FROM dataset WHERE collection_id = :collection_id AND name = :name LIMIT 1');
+    $stmt->bindValue(':collection_id', $collectionId, SQLITE3_INTEGER);
+    $stmt->bindValue(':name', $name, SQLITE3_TEXT);
     $result = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
     return $result ? (int)$result['id'] : false;
 }
