@@ -45,8 +45,6 @@ while ($row = $r->fetchArray(SQLITE3_ASSOC)) {
     $config[$row['key']] = $row['value'];
 }
 
-$meta = null; // Will be loaded when needed to avoid unnecessary file read operations
-
 // Browser request
 if (METHOD === 'GET' && HTML) {
 
@@ -176,41 +174,7 @@ function aggregateData(int $datasetId): void {
     aggregateDatapoints("days", "weeks", $datasetId);
     aggregateDatapoints("days", "months", $datasetId);
     aggregateDatapoints("months", "years", $datasetId);
-
     cleanupData($datasetId);
-}
-
-function cleanupData(int $datasetId): void {
-    global $db;
-
-    // Cleanup resolutions
-    foreach (RESOLUTIONS as $resolution) {
-        $sql = "DELETE FROM datapoint " .
-            "WHERE dataset_id = $datasetId AND resolution = '$resolution' AND timestamp < (" .
-            "SELECT MIN(timestamp) FROM (SELECT timestamp FROM datapoint " .
-            "WHERE dataset_id = $datasetId AND resolution = '$resolution' " .
-            "ORDER BY timestamp DESC LIMIT 1 OFFSET " . MAX_DATA_POINTS . "))";
-        $db->exec($sql);
-    }
-
-    // Cleanup samples
-    $cur_minute = getPeriodTimestamp(CURRENT_TIMESTAMP, 'minutes');
-    $db->exec("DELETE FROM datapoint WHERE dataset_id = $datasetId AND resolution = 'samples' AND timestamp < $cur_minute");
-}
-
-function response(string $data = '', string $contenttype = 'text/html', int $status = 200): void {
-    // End data with newline if not already present for better readability in terminal when using curl command
-    if (substr($data, -1) !== "\n") $data .= "\n";
-    http_response_code($status);
-    header("Content-Type: $contenttype");
-    exit($data);
-}
-
-function response_file(string $filename, array $data = []): void {
-    ob_start();
-    require $filename;
-    $content = ob_get_clean();
-    response($content);
 }
 
 function aggregateDatapoints(string $fromResolution, string $toResolution, int $datasetId): void {
@@ -253,6 +217,39 @@ function aggregateDatapoints(string $fromResolution, string $toResolution, int $
         $sql = "INSERT INTO datapoint (dataset_id, timestamp, avg, min, max, last, resolution) VALUES " . implode(',', $rows);
         $db->exec($sql);
     }
+}
+
+function cleanupData(int $datasetId): void {
+    global $db;
+
+    // Cleanup resolutions
+    foreach (RESOLUTIONS as $resolution) {
+        $sql = "DELETE FROM datapoint " .
+            "WHERE dataset_id = $datasetId AND resolution = '$resolution' AND timestamp < (" .
+            "SELECT MIN(timestamp) FROM (SELECT timestamp FROM datapoint " .
+            "WHERE dataset_id = $datasetId AND resolution = '$resolution' " .
+            "ORDER BY timestamp DESC LIMIT 1 OFFSET " . MAX_DATA_POINTS . "))";
+        $db->exec($sql);
+    }
+
+    // Cleanup samples
+    $cur_minute = getPeriodTimestamp(CURRENT_TIMESTAMP, 'minutes');
+    $db->exec("DELETE FROM datapoint WHERE dataset_id = $datasetId AND resolution = 'samples' AND timestamp < $cur_minute");
+}
+
+function response(string $data = '', string $contenttype = 'text/html', int $status = 200): void {
+    // End data with newline if not already present for better readability in terminal when using curl command
+    if (substr($data, -1) !== "\n") $data .= "\n";
+    http_response_code($status);
+    header("Content-Type: $contenttype");
+    exit($data);
+}
+
+function response_file(string $filename, array $data = []): void {
+    ob_start();
+    require $filename;
+    $content = ob_get_clean();
+    response($content);
 }
 
 function redirect(string $url): void {
@@ -325,6 +322,7 @@ function validateNumber(string $number): float {
     return (float)$number;
 }
 
+// Data functions
 function getCollectionId(string $hash): int|false {
     global $db;
     $hash = validateHash($hash);
@@ -332,42 +330,6 @@ function getCollectionId(string $hash): int|false {
     $stmt->bindValue(':hash', $hash, SQLITE3_TEXT);
     $result = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
     return $result ? (int)$result['id'] : false;
-}
-
-// Data functions
-function loadData(string $hash, string $dataset, string $resolution, string $aggregation = 'all', int $from = 0): array {
-    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $resolution . '.json';
-    if (!file_exists($file)) return [];
-    $data = file_get_json($file);
-
-    // If from is specified, filter data to only include entries with timestamp greater than or equal to from
-    if ($from > 0) {
-        $data = array_filter($data, function ($entry) use ($from) {
-            return $entry[0] >= $from;
-        });
-    }
-
-    // Add from timestamp as the first entry if it's not already included and from is specified
-    $firstEntry = reset($data);
-    if ($from > 0 && !empty($firstEntry) && $firstEntry[0] > $from) {
-        array_unshift($data, [$from, 'null', 'null', 'null', 'null']);
-    }
-
-    // If aggregation is specified, filter data accordingly (e.g., if aggregation is 'max', return only the max values)
-    if ($aggregation !== 'all') {
-        $typeIndex = ['avg' => 1, 'min' => 2, 'max' => 3, 'last' => 4][$aggregation] ?? 1;
-        $data = array_map(function ($entry) use ($typeIndex) {
-            return [$entry[0], $entry[$typeIndex]];
-        }, $data);
-    }
-
-    return $data;
-}
-
-function saveData(string $hash, string $dataset, string $resolution, array $data): void {
-    $file = DATA_DIR . $hash . '_' . $dataset . '_' . $resolution . '.json';
-    file_put_contents($file, json_encode($data), LOCK_EX);
-    updateMeta('lastModified', $hash, $dataset);
 }
 
 function getDatasetNames(int $collectionId): array {
@@ -489,47 +451,6 @@ function generateTestData(int $collectionId): void {
 
     $hash = $db->querySingle("SELECT hash FROM collection WHERE id = $collectionId");
     redirect('?graphurl=' . getUrl($hash) . '&secret=testing&name1=testdata');
-}
-
-function file_get_json(string $jsonFileName): array {
-    $contents = null;
-    $fp = fopen($jsonFileName, 'r');
-    if (flock($fp, LOCK_SH)) {
-        $contents = stream_get_contents($fp);
-        flock($fp, LOCK_UN);
-        fclose($fp);
-    } else {
-        fclose($fp);
-        response("Could not read file $jsonFileName", 'text/plain', 500);
-    }
-    $decoded = json_decode($contents, true);
-    if ($decoded === null) {
-        response("Could not decode JSON from file $jsonFileName", 'text/plain', 500);
-    }
-    return $decoded;
-}
-
-function updateMeta(string $key, string $hash, string $datasetName = ''): void {
-    // Lock meta file
-    $metaFile = DATA_DIR . 'meta.json';
-    $fp = fopen($metaFile, 'c+');
-    if (!flock($fp, LOCK_EX)) {
-        fclose($fp);
-        response("Could not read meta file", 'text/plain', 500);
-    }
-    // Get meta
-    $contents = stream_get_contents($fp);
-    $meta = json_decode($contents, true) ?? [];
-    // Merge meta
-    $meta[$hash] = array_merge($meta[$hash] ?? ['lastAccessed' => '', 'lastModified' => ''], [$key => CURRENT_FORMATTED_DATETIME]);
-    if (!empty($datasetName)) {
-        $meta[$hash][$datasetName] = array_merge($meta[$hash][$datasetName] ?? ['lastAccessed' => '', 'lastModified' => ''], [$key => CURRENT_FORMATTED_DATETIME]);
-    }
-    // Save meta
-    ftruncate($fp, 0);
-    rewind($fp);
-    fwrite($fp, json_encode($meta, JSON_PRETTY_PRINT));
-    fclose($fp);
 }
 
 // Helper functions
