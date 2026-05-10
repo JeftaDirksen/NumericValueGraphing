@@ -22,7 +22,7 @@ $db = new SQLite3(DATA_DIR . 'nvg.db');
 $db->exec('CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)');
 $db->exec('CREATE TABLE IF NOT EXISTS collection (id INTEGER PRIMARY KEY, hash TEXT UNIQUE)');
 $db->exec('CREATE TABLE IF NOT EXISTS dataset (id INTEGER PRIMARY KEY, collection_id INTEGER, name TEXT, FOREIGN KEY(collection_id) REFERENCES collection(id), UNIQUE(collection_id, name))');
-$db->exec('CREATE TABLE IF NOT EXISTS datapoint (dataset_id INTEGER, timestamp INTEGER, avg REAL, min REAL, max REAL, last REAL, aggregation TEXT, FOREIGN KEY(dataset_id) REFERENCES dataset(id))');
+$db->exec('CREATE TABLE IF NOT EXISTS datapoint (dataset_id INTEGER, timestamp INTEGER, avg REAL, min REAL, max REAL, last REAL, resolution TEXT, FOREIGN KEY(dataset_id) REFERENCES dataset(id))');
 
 // Db version
 $db_version = $db->querySingle("SELECT value FROM config WHERE key = 'db_version'");
@@ -140,11 +140,11 @@ if (METHOD === 'POST') {
         if ($key === 'secret') continue; // Skip secret field
         $fields[] = $key;
         $ds = validateDataset($key);
-        if ($secret === 'testing' && $ds === 'testdata' && $value === '123') generateTestData($hash); // For testing purposes, generates a lot of random data
+        if ($secret === 'testing' && $ds === 'testdata' && $value === '123') generateTestData($collectionId); // For testing purposes, generates a lot of random data
         $val = validateNumber($value);
         $db->exec("INSERT INTO dataset (collection_id, name) VALUES ($collectionId, '$ds') ON CONFLICT(collection_id, name) DO NOTHING");
         $datasetId = $db->querySingle("SELECT id FROM dataset WHERE collection_id = $collectionId AND name = '$ds'");
-        $db->exec("INSERT INTO datapoint (dataset_id, timestamp, avg, aggregation) VALUES ($datasetId, $time, $val, 'samples')");
+        $db->exec("INSERT INTO datapoint (dataset_id, timestamp, avg, resolution) VALUES ($datasetId, $time, $val, 'samples')");
         aggregateData($datasetId);
     }
 
@@ -177,15 +177,25 @@ function aggregateData(int $datasetId): void {
     aggregateDatapoints("days", "months", $datasetId);
     aggregateDatapoints("months", "years", $datasetId);
 
-    //cleanupData($collectionId, $datasetId);
+    cleanupData($datasetId);
 }
 
-function cleanupData(int $collectionId, int $datasetId): void {
+function cleanupData(int $datasetId): void {
+    global $db;
+
+    // Cleanup resolutions
     foreach (RESOLUTIONS as $resolution) {
-        $data = loadData($hash, $dataset, $resolution);
-        if ($data === []) continue;
-        saveData($hash, $dataset, $resolution, array_slice($data, -MAX_DATA_POINTS));
+        $sql = "DELETE FROM datapoint " .
+            "WHERE dataset_id = $datasetId AND resolution = '$resolution' AND timestamp < (" .
+            "SELECT MIN(timestamp) FROM (SELECT timestamp FROM datapoint " .
+            "WHERE dataset_id = $datasetId AND resolution = '$resolution' " .
+            "ORDER BY timestamp DESC LIMIT 1 OFFSET " . MAX_DATA_POINTS . "))";
+        $db->exec($sql);
     }
+
+    // Cleanup samples
+    $cur_minute = getPeriodTimestamp(CURRENT_TIMESTAMP, 'minutes');
+    $db->exec("DELETE FROM datapoint WHERE dataset_id = $datasetId AND resolution = 'samples' AND timestamp < $cur_minute");
 }
 
 function response(string $data = '', string $contenttype = 'text/html', int $status = 200): void {
@@ -203,100 +213,46 @@ function response_file(string $filename, array $data = []): void {
     response($content);
 }
 
-function aggregateSamples(int $datasetId): void {
-    global $db;
-    $cur_minute = getPeriodTimestamp(CURRENT_TIMESTAMP, 'minutes');
-    $result = $db->query("SELECT timestamp, value FROM datapoint WHERE dataset_id = $datasetId AND aggregation IS NULL ORDER BY timestamp ASC");
-    $samples = $result->fetchAll(SQLITE3_NUM);
-
-    $first_minute = getPeriodTimestamp($samples[0][0], 'minutes');
-    if ($first_minute >= $cur_minute) return;  // No samples to aggregate yet
-
-    $minutes = loadData($hash, $dataset, 'minutes');
-    $aggregated = [];
-    $bucket = ['sum' => 0, 'count' => 0, 'min' => null, 'max' => null, 'last' => null];
-    $minute = $first_minute;
-
-    foreach ($samples as $index => [$timestamp, $value]) {
-        $sample_minute = getPeriodTimestamp($timestamp, 'minutes');
-        if ($sample_minute >= $cur_minute) {
-            $remainingSamples = array_slice($samples, $index);
-            break;
-        }
-
-        if ($sample_minute !== $minute) {
-            if ($bucket['count'] > 0) {
-                $aggregated[] = [$minute, $bucket['sum'] / $bucket['count'], $bucket['min'], $bucket['max'], $bucket['last']];
-            }
-            $minute = $sample_minute;
-            $bucket = ['sum' => 0, 'count' => 0, 'min' => null, 'max' => null, 'last' => null];
-        }
-
-        $bucket['sum'] += $value;
-        $bucket['count']++;
-        $bucket['min'] = $bucket['min'] === null || $value < $bucket['min'] ? $value : $bucket['min'];
-        $bucket['max'] = $bucket['max'] === null || $value > $bucket['max'] ? $value : $bucket['max'];
-        $bucket['last'] = $value;
-    }
-
-    if (!isset($remainingSamples)) {
-        $remainingSamples = [];
-    }
-
-    if ($bucket['count'] > 0 && $minute < $cur_minute) {
-        $aggregated[] = [$minute, $bucket['sum'] / $bucket['count'], $bucket['min'], $bucket['max'], $bucket['last']];
-    }
-
-    if ($aggregated !== []) {
-        $minutes = array_merge($minutes, $aggregated);
-        saveData($hash, $dataset, 'minutes', $minutes);
-    }
-
-    saveData($hash, $dataset, 'samples', $remainingSamples);
-}
-
 function aggregateDatapoints(string $fromResolution, string $toResolution, int $datasetId): void {
     global $db;
 
     $cur_to_timestamp = getPeriodTimestamp(CURRENT_TIMESTAMP, $toResolution);
 
-    $sql = "SELECT timestamp, avg, COALESCE(min, avg) as min, COALESCE(max, avg) as max, COALESCE(last, avg) as last FROM datapoint " .
-        "WHERE dataset_id = $datasetId AND aggregation = '$fromResolution' AND timestamp < $cur_to_timestamp " .
-        "ORDER BY timestamp ASC";
-    $fromData = $db->query($sql)->fetchAll(SQLITE3_ASSOC);
-
-
-
-
-
-    $lastToDataPeriod = $toData !== [] ? $toData[array_key_last($toData)][0] : 0;
-    $currentToPeriod = getPeriodTimestamp(CURRENT_TIMESTAMP, $toLevel);
     $periodData = [];
-
-    foreach ($fromData as [$timestamp, $avg, $min, $max, $last]) {
-        $thisToPeriod = getPeriodTimestamp($timestamp, $toLevel);
-        if ($thisToPeriod <= $lastToDataPeriod) continue;  // Skip if we already have data for this period
-        if ($thisToPeriod >= $currentToPeriod) break;      // Stop if we've reached the current period
-
+    $sql = "SELECT timestamp, avg, COALESCE(min, avg) as min, COALESCE(max, avg) as max, COALESCE(last, avg) as last " .
+        "FROM datapoint " .
+        "WHERE dataset_id = $datasetId AND resolution = '$fromResolution' AND timestamp < $cur_to_timestamp " .
+        "ORDER BY timestamp ASC";
+    $result = $db->query($sql);
+    while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+        $thisToPeriod = getPeriodTimestamp($row['timestamp'], $toResolution);
         $bucket = &$periodData[$thisToPeriod];
         if (!isset($bucket)) {
-            $bucket = ['sum' => 0, 'count' => 0, 'min' => $min, 'max' => $max, 'last' => $last];
+            $bucket = ['sum' => 0, 'count' => 0, 'min' => $row['min'], 'max' => $row['max'], 'last' => $row['last']];
         }
-        $bucket['sum'] += $avg;
+        $bucket['sum'] += $row['avg'];
         $bucket['count']++;
-        $bucket['min'] = $min < $bucket['min'] ? $min : $bucket['min'];
-        $bucket['max'] = $max > $bucket['max'] ? $max : $bucket['max'];
-        $bucket['last'] = $last;
+        $bucket['min'] = $row['min'] < $bucket['min'] ? $row['min'] : $bucket['min'];
+        $bucket['max'] = $row['max'] > $bucket['max'] ? $row['max'] : $bucket['max'];
+        $bucket['last'] = $row['last'];
         unset($bucket);
     }
 
     if ($periodData === []) return;  // No new data to aggregate
 
     // Convert and save aggregated data
+    $rows = [];
     foreach ($periodData as $period => $data) {
-        $toData[] = [$period, $data['sum'] / $data['count'], $data['min'], $data['max'], $data['last']];
+        $avg  = $data['sum'] / $data['count'];
+        $min  = $data['min'];
+        $max  = $data['max'];
+        $last = $data['last'];
+        $rows[] = "($datasetId, $period, $avg, $min, $max, $last, '$toResolution')";
     }
-    saveData($hash, $dataset, $toLevel, $toData);
+    if (!empty($rows)) {
+        $sql = "INSERT INTO datapoint (dataset_id, timestamp, avg, min, max, last, resolution) VALUES " . implode(',', $rows);
+        $db->exec($sql);
+    }
 }
 
 function redirect(string $url): void {
@@ -498,22 +454,30 @@ function generateGraphData(string $hash, array $period = ['1', 'hours'], array $
     return $chartDataJson;
 }
 
-function generateTestData(string $hash): void {
+function generateTestData(int $collectionId): void {
+    global $db;
     $datasets = ['testdata1', 'testdata2', 'testdata3'];
     $twoYearsAgo = CURRENT_TIMESTAMP - (2 * 365 * 24 * 60 * 60);
 
     foreach ($datasets as $dataset) {
-        $samples = [];
+        $db->exec("INSERT INTO dataset (collection_id, name) VALUES ($collectionId, '$dataset') ON CONFLICT(collection_id, name) DO NOTHING");
+        $datasetId = $db->querySingle("SELECT id FROM dataset WHERE collection_id = $collectionId AND name = '$dataset'");
         $value = 0.0;
+        $rows = [];
         for ($timestamp = $twoYearsAgo; $timestamp <= CURRENT_TIMESTAMP; $timestamp += 120) {
-            $samples[] = [$timestamp, $value];
             $value += rand(-1000, 1000) / 1000;
+            $rows[] = "($datasetId, $timestamp, $value, 'samples')";
         }
 
-        saveData($hash, $dataset, 'samples', $samples);
-        aggregateData($hash, $dataset);
+        if (!empty($rows)) {
+            $sql = "INSERT INTO datapoint (dataset_id, timestamp, avg, resolution) VALUES " . implode(',', $rows);
+            $db->exec($sql);
+        }
+
+        aggregateData($datasetId);
     }
 
+    $hash = $db->querySingle("SELECT hash FROM collection WHERE id = $collectionId");
     redirect('?graphurl=' . getUrl($hash) . '&secret=testing&name1=testdata');
 }
 
