@@ -54,7 +54,7 @@ if (METHOD === 'GET' && HTML) {
     if (isset($_GET['path'])) {
         // Check hash
         $hash = validateHash($_GET['path']);
-        if (!hashExists($hash)) response('No graphs found', 'text/plain', 404);
+        if (!($collectionId = getCollectionId($hash))) response('No graphs found', 'text/plain', 404);
 
         // Get parameters from URL and validate them
         /*
@@ -71,7 +71,7 @@ if (METHOD === 'GET' && HTML) {
         // Hide menu parameter
         $hideMenu = isset($_GET['hm']) && ($_GET['hm'] === '1');
         // Datasets parameters
-        $datasetNames = getDatasetNames($hash);
+        $datasetNames = getDatasetNames($collectionId);
         if (empty($datasetNames)) response('No graphs found', 'text/plain', 404);
         $datasets = [];
         for ($i = 1; $i <= count($datasetNames); $i++) {
@@ -88,7 +88,7 @@ if (METHOD === 'GET' && HTML) {
         $data['pu'] = $period[1];
         $data['datasets'] = $datasets;
         $data['resolution'] = getResolution($period);
-        $data['chartDataJson'] = generateGraphData($hash, $period, $datasets);
+        $data['chartDataJson'] = generateGraphData($collectionId, $period, $datasets);
         response_file('graph.php', $data);
     }
 
@@ -325,12 +325,13 @@ function validateNumber(string $number): float {
     return (float)$number;
 }
 
-function hashExists(string $hash): bool {
+function getCollectionId(string $hash): int|false {
+    global $db;
     $hash = validateHash($hash);
-    foreach (glob(DATA_DIR . $hash . '_*_samples.json') as $file) {
-        if (file_exists($file)) return true;
-    }
-    return false;
+    $stmt = $db->prepare('SELECT id FROM collection WHERE hash = :hash LIMIT 1');
+    $stmt->bindValue(':hash', $hash, SQLITE3_TEXT);
+    $result = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
+    return $result ? (int)$result['id'] : false;
 }
 
 // Data functions
@@ -369,15 +370,15 @@ function saveData(string $hash, string $dataset, string $resolution, array $data
     updateMeta('lastModified', $hash, $dataset);
 }
 
-function getDatasetNames(string $hash): array {
-    // Iterate files in DATA_DIR and find the datasets for the given hash
+function getDatasetNames(int $collectionId): array {
+    global $db;
+    $stmt = $db->prepare("SELECT name FROM dataset WHERE collection_id = :id ORDER BY name ASC");
+    $stmt->bindValue(':id', $collectionId, SQLITE3_INTEGER);
+    $result = $stmt->execute();
     $names = [];
-    foreach (glob(DATA_DIR . $hash . '_*_samples.json') as $file) {
-        $filename = basename($file);
-        $parts = explode('_', $filename);
-        $names[] = $parts[1];
+    while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+        $names[] = $row['name'];
     }
-    sort($names);
     return $names;
 }
 
@@ -392,66 +393,75 @@ function getResolution(array $period): string {
     return 'years'; // Default to years if no suitable level is found
 }
 
-function generateGraphData(string $hash, array $period = ['1', 'hours'], array $datasets = []): string {
+function generateGraphData(int $collectionId, array $period = ['1', 'hours'], array $datasets = []): string {
+    global $db;
     $periodInMinutes = getPeriodInMinutes($period);
     $resolution = getResolution($period);
 
-    // Iterate datasets and get data for each
-    updateMeta('lastAccessed', $hash);
-    $data = [];
-    $startFrom = CURRENT_TIMESTAMP - $periodInMinutes * 60;
-    foreach ($datasets as $dataset) {
-        if (!$dataset['enabled']) continue; // Skip disabled datasets
-        updateMeta('lastAccessed', $hash, $dataset['name']);
-        $data[$dataset['name']] = loadData($hash, $dataset['name'], $resolution, $dataset['aggregation'], $startFrom);
+    $startFrom = time() - ($periodInMinutes * 60);
+    $allData = [];
+    $allTimestamps = [$startFrom]; // Initialize with startFrom to ensure the starting null
 
-        // Add current timestamp with null value if there is no data point for the current period to make sure the graph always reaches the current time
-        if (empty($data[$dataset['name']]) || end($data[$dataset['name']])[0] < CURRENT_TIMESTAMP) {
-            $data[$dataset['name']][] = [CURRENT_TIMESTAMP, 'null'];
+    // 1. Prepare Statement (Do this once outside the loop!)
+    $stmt = $db->prepare("SELECT timestamp, avg, min, max, last FROM datapoint dp 
+            JOIN dataset d ON dp.dataset_id = d.id 
+            WHERE d.collection_id = :collId AND d.name = :name 
+            AND dp.resolution = :res AND dp.timestamp >= :start 
+            ORDER BY dp.timestamp ASC");
+
+    $enabledDatasets = [];
+    foreach ($datasets as $ds) {
+        if (!($ds['enabled'] ?? false)) continue;
+
+        $name = $ds['name'];
+        $enabledDatasets[$name] = $ds;
+        $allData[$name] = [];
+
+        $stmt->bindValue(':collId', $collectionId, SQLITE3_INTEGER);
+        $stmt->bindValue(':name', $name, SQLITE3_TEXT);
+        $stmt->bindValue(':res', $resolution, SQLITE3_TEXT);
+        $stmt->bindValue(':start', $startFrom, SQLITE3_INTEGER);
+
+        $result = $stmt->execute();
+        while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+            $val = $row[$ds['aggregation'] ?? 'avg'];
+            $allData[$name][$row['timestamp']] = $val;
+            $allTimestamps[] = $row['timestamp'];
         }
+
+        // Ensure end point
+        $now = time();
+        $allTimestamps[] = $now;
     }
 
-    // No data to show
-    if (empty($data)) {
-        $chartDataJson = "[[{type: 'datetime', label: 'Time'},{type: 'number', label: 'Data'}],[new Date(0), 0]]";
+    if (empty($enabledDatasets)) {
+        return "[[{type: 'datetime', label: 'Time'},{type: 'number', label: 'Data'}],[new Date(0), 0]]";
     }
 
-    // Convert data to format suitable for Google Charts with multiple datasets
-    else {
-        $chartDataJson = "[[{type: 'datetime', label: 'Time'}";
-        foreach ($data as $dataset => $entries) {
-            $chartDataJson .= ", {type: 'number', label: " . json_encode($dataset, JSON_UNESCAPED_UNICODE) . "}";
-        }
-        $chartDataJson .= "]";
+    // 2. Clean and Sort Timestamps
+    $uniqueTimestamps = array_unique($allTimestamps);
+    sort($uniqueTimestamps);
 
-        // Collect all timestamps
-        $timestamps = [];
-        foreach ($data as $entries) {
-            foreach ($entries as $entry) {
-                $timestamps[] = $entry[0];
-            }
-        }
-        sort($timestamps);
-
-        // Build rows with values for each dataset
-        foreach ($timestamps as $timestamp) {
-            $chartDataJson .= ",[new Date(" . $timestamp * 1000 . ")";
-            foreach ($data as $entries) {
-                $value = null;
-                foreach ($entries as $entry) {
-                    if ($entry[0] == $timestamp) {
-                        $value = $entry[1];
-                        break;
-                    }
-                }
-                $chartDataJson .= ", " . ($value === null ? 'null' : $value);
-            }
-            $chartDataJson .= "]";
-        }
-        $chartDataJson .= "]";
+    // 3. Build the JSON string
+    $header = [['type' => 'datetime', 'label' => 'Time']];
+    foreach ($enabledDatasets as $name => $ds) {
+        $header[] = ['type' => 'number', 'label' => $name];
     }
 
-    return $chartDataJson;
+    $rows = [];
+    foreach ($uniqueTimestamps as $ts) {
+        $rowStr = "[new Date(" . ($ts * 1000) . ")";
+        foreach ($enabledDatasets as $name => $ds) {
+            // If it's the exact startFrom and we have no data for this TS, it stays null
+            $val = $allData[$name][$ts] ?? 'null';
+            $rowStr .= ", " . $val;
+        }
+        $rowStr .= "]";
+        $rows[] = $rowStr;
+    }
+
+    // Manual assembly of the outer array to handle the 'new Date()' non-JSON objects
+    return "[" . json_encode($header) . "," . implode(",", $rows) . "]";
 }
 
 function generateTestData(int $collectionId): void {
