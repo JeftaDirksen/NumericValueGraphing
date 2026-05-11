@@ -31,6 +31,11 @@ if ($db_version === false) {
     $db_version = 1;
 }
 
+// Convert old json data to db
+if(file_exists(DATA_DIR . 'config.json')) {
+    require 'convert.php';
+}
+
 // Add salt to config if not already present
 $result = $db->query("SELECT value FROM config WHERE key = 'salt'");
 if ($result->fetchArray() === false) {
