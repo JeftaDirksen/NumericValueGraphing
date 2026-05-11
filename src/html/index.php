@@ -26,7 +26,7 @@ $db->exec('CREATE TABLE IF NOT EXISTS datapoint (dataset_id INTEGER, timestamp I
 
 // Db version 1
 $db_version = $db->querySingle("SELECT value FROM config WHERE key = 'db_version'");
-if ($db_version === false) {
+if (!$db_version) {
     $db->exec("INSERT INTO config (key, value) VALUES ('db_version', '1')");
     $db_version = 1;
 }
