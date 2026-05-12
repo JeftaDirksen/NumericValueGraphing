@@ -211,10 +211,15 @@ function aggregateDatapoints(string $fromResolution, string $toResolution, int $
 
     $cur_to_timestamp = getPeriodTimestamp(CURRENT_TIMESTAMP, $toResolution);
 
+    // Get last of toResolution record timestamp
+    $sql = "SELECT timestamp FROM datapoint WHERE dataset_id = $datasetId AND resolution = '$toResolution' ORDER BY timestamp DESC LIMIT 1";
+    $lastToTimestamp = $db->querySingle($sql);
+    $nextToRecordTimestamp = $lastToTimestamp + getPeriodInMinutes([1, $toResolution]) * 60;
+
     $periodData = [];
     $sql = "SELECT timestamp, avg, COALESCE(min, avg) as min, COALESCE(max, avg) as max, COALESCE(last, avg) as last " .
         "FROM datapoint " .
-        "WHERE dataset_id = $datasetId AND resolution = '$fromResolution' AND timestamp < $cur_to_timestamp " .
+        "WHERE dataset_id = $datasetId AND resolution = '$fromResolution' AND timestamp < $cur_to_timestamp AND timestamp >= $nextToRecordTimestamp " .
         "ORDER BY timestamp ASC";
     $result = $db->query($sql);
     while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
