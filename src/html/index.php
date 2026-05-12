@@ -20,41 +20,15 @@ define('CURRENT_FORMATTED_DATETIME', (new DateTime())->format(DateTime::ATOM));
 // Create & connect SQLite database
 $db = new SQLite3(DATA_DIR . 'nvg.db');
 $db->exec('CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)');
-$db->exec('CREATE TABLE IF NOT EXISTS collection (id INTEGER PRIMARY KEY, hash TEXT UNIQUE, secret TEXT UNIQUE)');
+$db->exec('CREATE TABLE IF NOT EXISTS collection (id INTEGER PRIMARY KEY, hash TEXT UNIQUE, secret TEXT)');
 $db->exec('CREATE TABLE IF NOT EXISTS dataset (id INTEGER PRIMARY KEY, collection_id INTEGER, name TEXT, FOREIGN KEY(collection_id) REFERENCES collection(id), UNIQUE(collection_id, name))');
-$db->exec('CREATE TABLE IF NOT EXISTS datapoint (dataset_id INTEGER, timestamp INTEGER, avg REAL, min REAL, max REAL, last REAL, resolution TEXT, FOREIGN KEY(dataset_id) REFERENCES dataset(id))');
+$db->exec('CREATE TABLE IF NOT EXISTS datapoint (dataset_id INTEGER, timestamp INTEGER, avg REAL, min REAL, max REAL, last REAL, resolution TEXT, FOREIGN KEY(dataset_id) REFERENCES dataset(id), UNIQUE(dataset_id, timestamp, resolution))');
 
 // Db version 1
 $db_version = $db->querySingle("SELECT value FROM config WHERE key = 'db_version'");
 if (!$db_version) {
     $db->exec("INSERT INTO config (key, value) VALUES ('db_version', '1')");
     $db_version = 1;
-}
-
-// Db patch 2
-if ($db_version == 1) {
-    // Remove collection.secret UNIQUE
-    try {
-        $db->exec('BEGIN TRANSACTION');
-        $db->exec('ALTER TABLE collection RENAME TO collection_old');
-        $db->exec('CREATE TABLE collection (
-            id INTEGER PRIMARY KEY, 
-            hash TEXT UNIQUE, 
-            secret TEXT
-        )');
-        $db->exec('INSERT INTO collection (id, hash, secret) SELECT id, hash, secret FROM collection_old');
-        $db->exec('DROP TABLE collection_old');
-        $db->exec("UPDATE config SET value = '2' WHERE key = 'db_version'");
-        $db->exec('COMMIT');
-    } catch (Exception $e) {
-        $db->exec('ROLLBACK');
-        throw $e;
-    }
-}
-
-// Convert old json data to db
-if (file_exists(DATA_DIR . 'config.json')) {
-    require 'convert.php';
 }
 
 // Add salt to config if not already present
