@@ -28,7 +28,18 @@ $db->exec('CREATE TABLE IF NOT EXISTS datapoint (dataset_id INTEGER, timestamp I
 $db_version = $db->querySingle("SELECT value FROM config WHERE key = 'db_version'");
 if (!$db_version) {
     $db->exec("INSERT INTO config (key, value) VALUES ('db_version', '1')");
-    $db_version = 1;
+    $db_version = '1';
+}
+
+// Db update v2
+if ($db_version === '1') {
+    $db->exec("ALTER TABLE datapoint ADD COLUMN sum REAL");
+    $db->exec("ALTER TABLE datapoint ADD COLUMN count INTEGER");
+    $db->exec("UPDATE datapoint SET sum = avg, count = 1 WHERE count IS NULL");
+    $db->exec("ALTER TABLE datapoint DROP COLUMN avg");
+    $db->exec("DELETE FROM datapoint WHERE resolution = 'samples'");
+    $db->exec("UPDATE config SET value = '2' WHERE key = 'db_version'");
+    $db_version = '2';
 }
 
 // Add salt to config if not already present
@@ -131,7 +142,6 @@ if (METHOD === 'POST') {
     $secret = $_POST['secret'] ?? '';
     $hash = validateSecret($secret);
     $collectionId = createCollection($hash, $secret);
-    $time = CURRENT_TIMESTAMP;
     $fields = [];
     foreach ($_POST as $key => $value) {
         if ($key === 'secret') continue; // Skip secret field
@@ -140,13 +150,8 @@ if (METHOD === 'POST') {
         if ($secret === 'testing' && $ds === 'testdata' && $value === '123') generateTestData($collectionId); // For testing purposes, generates a lot of random data
         $val = validateNumber($value);
         $datasetId = createDataset($collectionId, $ds);
-        $stmt = $db->prepare("INSERT INTO datapoint (dataset_id, timestamp, avg, resolution) VALUES (:dataset_id, :timestamp, :avg, :resolution)");
-        $stmt->bindValue(':dataset_id', $datasetId, SQLITE3_INTEGER);
-        $stmt->bindValue(':timestamp', $time, SQLITE3_INTEGER);
-        $stmt->bindValue(':avg', $val, SQLITE3_FLOAT);
-        $stmt->bindValue(':resolution', 'samples', SQLITE3_TEXT);
-        $stmt->execute();
-        aggregateData($datasetId);
+        addDatapoint($datasetId, CURRENT_TIMESTAMP, $val);
+        cleanupData($datasetId);
     }
 
     // HTML response
@@ -169,80 +174,43 @@ if (METHOD === 'POST') {
 response('Method not allowed', 'text/plain', 405);
 
 // Subroutines
-function aggregateData(int $datasetId): void {
-    aggregateDatapoints("samples", "minutes", $datasetId);
-    aggregateDatapoints("minutes", "quarters", $datasetId);
-    aggregateDatapoints("quarters", "hours", $datasetId);
-    aggregateDatapoints("hours", "days", $datasetId);
-    aggregateDatapoints("days", "weeks", $datasetId);
-    aggregateDatapoints("days", "months", $datasetId);
-    aggregateDatapoints("months", "years", $datasetId);
-    cleanupData($datasetId);
-}
-
-function aggregateDatapoints(string $fromResolution, string $toResolution, int $datasetId): void {
+function addDatapoint(int $datasetId, int $timestamp, float $value): void {
     global $db;
 
-    $cur_to_timestamp = getPeriodTimestamp(CURRENT_TIMESTAMP, $toResolution);
+    $stmt = $db->prepare(
+        "INSERT INTO datapoint (dataset_id, timestamp, sum, count, min, max, last, resolution) "
+            . "VALUES (:dataset_id, :timestamp, :val, 1, :val, :val, :val, :resolution) "
+            . "ON CONFLICT(dataset_id, timestamp, resolution) "
+            . "DO UPDATE SET sum = sum + :val, count = count + 1, "
+            . "min = MIN(min, :val), max = MAX(max, :val), last = :val"
+    );
 
-    // Get last of toResolution record timestamp
-    $sql = "SELECT timestamp FROM datapoint WHERE dataset_id = $datasetId AND resolution = '$toResolution' ORDER BY timestamp DESC LIMIT 1";
-    $lastToTimestamp = $db->querySingle($sql);
-    $nextToRecordTimestamp = $lastToTimestamp + getPeriodInMinutes([1, $toResolution]) * 60;
-
-    $periodData = [];
-    $sql = "SELECT timestamp, avg, COALESCE(min, avg) as min, COALESCE(max, avg) as max, COALESCE(last, avg) as last " .
-        "FROM datapoint " .
-        "WHERE dataset_id = $datasetId AND resolution = '$fromResolution' AND timestamp < $cur_to_timestamp AND timestamp >= $nextToRecordTimestamp " .
-        "ORDER BY timestamp ASC";
-    $result = $db->query($sql);
-    while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
-        $thisToPeriod = getPeriodTimestamp($row['timestamp'], $toResolution);
-        $bucket = &$periodData[$thisToPeriod];
-        if (!isset($bucket)) {
-            $bucket = ['sum' => 0, 'count' => 0, 'min' => $row['min'], 'max' => $row['max'], 'last' => $row['last']];
-        }
-        $bucket['sum'] += $row['avg'];
-        $bucket['count']++;
-        $bucket['min'] = $row['min'] < $bucket['min'] ? $row['min'] : $bucket['min'];
-        $bucket['max'] = $row['max'] > $bucket['max'] ? $row['max'] : $bucket['max'];
-        $bucket['last'] = $row['last'];
-        unset($bucket);
-    }
-
-    if ($periodData === []) return;  // No new data to aggregate
-
-    // Convert and save aggregated data
-    $rows = [];
-    foreach ($periodData as $period => $data) {
-        $avg  = $data['sum'] / $data['count'];
-        $min  = $data['min'];
-        $max  = $data['max'];
-        $last = $data['last'];
-        $rows[] = "($datasetId, $period, $avg, $min, $max, $last, '$toResolution')";
-    }
-    if (!empty($rows)) {
-        $sql = "INSERT INTO datapoint (dataset_id, timestamp, avg, min, max, last, resolution) VALUES " . implode(',', $rows);
-        $db->exec($sql);
+    foreach (RESOLUTIONS as $res) {
+        $stmt->bindValue(':dataset_id', $datasetId, SQLITE3_INTEGER);
+        $stmt->bindValue(':timestamp', getPeriodTimestamp($timestamp, $res), SQLITE3_INTEGER);
+        $stmt->bindValue(':val', $value, SQLITE3_FLOAT);
+        $stmt->bindValue(':resolution', $res, SQLITE3_TEXT);
+        $stmt->execute();
     }
 }
 
 function cleanupData(int $datasetId): void {
     global $db;
 
-    // Cleanup resolutions
-    foreach (RESOLUTIONS as $resolution) {
-        $sql = "DELETE FROM datapoint " .
-            "WHERE dataset_id = $datasetId AND resolution = '$resolution' AND timestamp < (" .
+    $stmt = $db->prepare(
+        "DELETE FROM datapoint " .
+            "WHERE dataset_id = :dataset_id AND resolution = :resolution AND timestamp < (" .
             "SELECT MIN(timestamp) FROM (SELECT timestamp FROM datapoint " .
-            "WHERE dataset_id = $datasetId AND resolution = '$resolution' " .
-            "ORDER BY timestamp DESC LIMIT 1 OFFSET " . MAX_DATA_POINTS . "))";
-        $db->exec($sql);
-    }
+            "WHERE dataset_id = :dataset_id AND resolution = :resolution " .
+            "ORDER BY timestamp DESC LIMIT 1 OFFSET " . MAX_DATA_POINTS . "))"
+    );
 
-    // Cleanup samples
-    $cur_minute = getPeriodTimestamp(CURRENT_TIMESTAMP, 'minutes');
-    $db->exec("DELETE FROM datapoint WHERE dataset_id = $datasetId AND resolution = 'samples' AND timestamp < $cur_minute");
+    foreach (RESOLUTIONS as $res) {
+        $stmt->bindValue(':dataset_id', $datasetId, SQLITE3_INTEGER);
+        $stmt->bindValue(':resolution', $res, SQLITE3_TEXT);
+        $stmt->execute();
+        $stmt->reset();
+    }
 }
 
 function response(string $data = '', string $contenttype = 'text/html', int $status = 200): void {
@@ -369,8 +337,8 @@ function getDatasetId(int $collectionId, string $name): int|false {
 
 function getDatasetNames(int $collectionId): array {
     global $db;
-    $stmt = $db->prepare("SELECT name FROM dataset WHERE collection_id = :id ORDER BY name ASC");
-    $stmt->bindValue(':id', $collectionId, SQLITE3_INTEGER);
+    $stmt = $db->prepare("SELECT name FROM dataset WHERE collection_id = :collection_id ORDER BY name ASC");
+    $stmt->bindValue(':collection_id', $collectionId, SQLITE3_INTEGER);
     $result = $stmt->execute();
     $names = [];
     while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
@@ -381,7 +349,7 @@ function getDatasetNames(int $collectionId): array {
 
 function getResolution(array $period): string {
     $periodInMinutes = getPeriodInMinutes($period);
-    $resolutionMinutes = ['minutes' => 1, 'quarters' => 15, 'hours' => 60, 'days' => 1440, 'weeks' => 10080, 'months' => 43680, 'years' => 524160];
+    $resolutionMinutes = ['minutes' => 1, 'quarters' => 15, 'hours' => 60, 'days' => 1440, 'weeks' => 10080, 'months' => 43680, 'years' => 525600];
     foreach ($resolutionMinutes as $res => $minutes) {
         if ($periodInMinutes <= $minutes * MAX_DATA_POINTS) {
             return $res;
@@ -395,12 +363,12 @@ function generateGraphData(int $collectionId, array $period = ['1', 'hours'], ar
     $periodInMinutes = getPeriodInMinutes($period);
     $resolution = getResolution($period);
 
-    $startFrom = time() - ($periodInMinutes * 60);
+    $startFrom = CURRENT_TIMESTAMP - ($periodInMinutes * 60);
     $allData = [];
     $allTimestamps = [$startFrom]; // Initialize with startFrom to ensure the starting null
 
     // 1. Prepare Statement (Do this once outside the loop!)
-    $stmt = $db->prepare("SELECT timestamp, avg, min, max, last FROM datapoint dp 
+    $stmt = $db->prepare("SELECT timestamp, sum / count as avg, min, max, last FROM datapoint dp 
             JOIN dataset d ON dp.dataset_id = d.id 
             WHERE d.collection_id = :collId AND d.name = :name 
             AND dp.resolution = :res AND dp.timestamp >= :start 
@@ -427,7 +395,7 @@ function generateGraphData(int $collectionId, array $period = ['1', 'hours'], ar
         }
 
         // Ensure end point
-        $now = time();
+        $now = CURRENT_TIMESTAMP;
         $allTimestamps[] = $now;
     }
 
@@ -464,24 +432,17 @@ function generateGraphData(int $collectionId, array $period = ['1', 'hours'], ar
 function generateTestData(int $collectionId): void {
     global $db;
     $datasets = ['testdata1', 'testdata2', 'testdata3'];
-    $twoYearsAgo = CURRENT_TIMESTAMP - (2 * 365 * 24 * 60 * 60);
+    $someTimeAgo = CURRENT_TIMESTAMP - (1.25 * 60 * 60);   // 1.25 hours ago
 
     foreach ($datasets as $dataset) {
         $db->exec("INSERT INTO dataset (collection_id, name) VALUES ($collectionId, '$dataset') ON CONFLICT(collection_id, name) DO NOTHING");
         $datasetId = $db->querySingle("SELECT id FROM dataset WHERE collection_id = $collectionId AND name = '$dataset'");
         $value = 0.0;
-        $rows = [];
-        for ($timestamp = $twoYearsAgo; $timestamp <= CURRENT_TIMESTAMP; $timestamp += 120) {
+        for ($timestamp = $someTimeAgo; $timestamp <= CURRENT_TIMESTAMP; $timestamp += 50) {   // Every 50 seconds
             $value += rand(-1000, 1000) / 1000;
-            $rows[] = "($datasetId, $timestamp, $value, 'samples')";
+            addDatapoint($datasetId, $timestamp, $value);
         }
-
-        if (!empty($rows)) {
-            $sql = "INSERT INTO datapoint (dataset_id, timestamp, avg, resolution) VALUES " . implode(',', $rows);
-            $db->exec($sql);
-        }
-
-        aggregateData($datasetId);
+        cleanupData($datasetId);
     }
 
     $hash = $db->querySingle("SELECT hash FROM collection WHERE id = $collectionId");
