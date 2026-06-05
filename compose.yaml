@@ -5,7 +5,7 @@ services:
     ports:
       - "${PORT:-8080}:80"
     volumes:
-      - ./data:/data
+      - data:/data
     restart: unless-stopped
 
   sqlitebrowser:
@@ -17,7 +17,7 @@ services:
       - TZ=Etc/UTC
     volumes:
       - sqlitebrowser:/config
-      - ./data:/data
+      - data:/nvg_data
     ports:
       - 3000:3000
       - 3001:3001
@@ -25,4 +25,5 @@ services:
     restart: unless-stopped
 
 volumes:
+  data:
   sqlitebrowser:
